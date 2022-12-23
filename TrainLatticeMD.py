@@ -261,5 +261,3 @@ class TrainLatticeMD:
                 if aline.strip() == "": continue
                 linelist = aline.strip().split("=")
                 if len(linelist) > 1: self.settings_[linelist[0].strip()] = linelist[1].strip()
-
-mytrain = TrainLatticeMD("input-test.in")
