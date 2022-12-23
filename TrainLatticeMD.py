@@ -53,6 +53,7 @@ class TrainLatticeMD:
         
     def create_model(self):
         self.lattice_md_ = LatticeMD(number_of_matters = self.number_of_matters_, matter_dim = self.matter_dim_, matter_conv_layer_kernal_size = (), matter_conv_layer_stride = ())
+        self.lattice_md_.to(self.device_)
         # batch_size = 10
         # matter_sequence           = self.batched_data_sequence_to_model_input(self.matter_sequence_data_[:batch_size])
         # stress_pe_sequence = self.batched_data_sequence_to_model_input(self.stress_pe_sequence_data_[:batch_size])
@@ -219,15 +220,15 @@ class TrainLatticeMD:
                 stress_pe_sequence_data_tmp = torch.cat((stress_sequence_data_tmp, pe_sequence_data_tmp), dim = -1)
                 stress_pe_sum_data_tmp = torch.cat((stress_sum_data_tmp, pe_sum_data_tmp), dim = -1)
                 
-                self.dataset_matter_prefactor_.append(matter_prefactor)
-                self.dataset_stress_pe_prefactor_.append(torch.cat((stress_prefactor,pe_prefactor)))
-                self.dataset_matter_sum_prefactor_.append(matter_sum_prefactor)
-                self.dataset_stress_pe_sum_prefactor_.append(torch.cat((stress_sum_prefactor,pe_sum_prefactor)))
+                self.dataset_matter_prefactor_.append(matter_prefactor.to(self.device_))
+                self.dataset_stress_pe_prefactor_.append(torch.cat((stress_prefactor,pe_prefactor)).to(self.device_))
+                self.dataset_matter_sum_prefactor_.append(matter_sum_prefactor.to(self.device_))
+                self.dataset_stress_pe_sum_prefactor_.append(torch.cat((stress_sum_prefactor,pe_sum_prefactor)).to(self.device_))
 
                 self.dataset_number_of_samples_.append(len(matter_sequence_data_tmp))
                 self.dataset_system_dim_.append(system_dim_tmp)
                 dataset = LatticeMDDataset(matter_sequence_data_tmp, stress_pe_sequence_data_tmp, matter_sum_data_tmp, stress_pe_sum_data_tmp, device = self.device_)
-
+                
                 total_n_test_sample        = int(self.test_ratio_*self.dataset_number_of_samples_[-1])
                 total_n_train_sample       = self.dataset_number_of_samples_[-1] - total_n_test_sample
                 print("\t\tNumber of training samples = %s"%(total_n_train_sample))
