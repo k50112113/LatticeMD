@@ -9,7 +9,7 @@ class TimestepException(Exception): pass
 class NumberOfElementsException(Exception): pass
 
 class MDSequenceData:
-    def __init__(self, input_dir, system_dim, sequence_length, sequence_start_indices = [0], output_dir='./', select_matter = ()):
+    def __init__(self, input_dir, system_dim, sequence_length, sequence_start_indices = [0], output_dir='./', select_matter = (), log_filename = 'log.lammps'):
         self.output_dir_ = output_dir
         self.system_dim_ = system_dim
         self.system_dim3_ = system_dim[0]*system_dim[1]*system_dim[2]
@@ -18,6 +18,7 @@ class MDSequenceData:
         
         try:
             # read pe
+            print("Reading %s/pe.txt..."%(input_dir))
             keys, step, data = self.read_lammps_ave("%s/pe.txt"%(input_dir))
             self.data_step_ = step
             if len(keys) != 1: raise NumberOfElementsException
@@ -25,6 +26,7 @@ class MDSequenceData:
             pe_data = data
             
             # read stress
+            print("Reading %s/stress.txt..."%(input_dir))
             keys, step, data = self.read_lammps_ave("%s/stress.txt"%(input_dir))
             if len(self.data_step_) != len(step) or ((self.data_step_-step)**2).sum() > 0.0: raise TimestepException
             if len(keys) != 6:  raise NumberOfElementsException
@@ -32,6 +34,7 @@ class MDSequenceData:
             stress_data = data
             
             # read matter
+            print("Reading %s/matter.txt..."%(input_dir))
             keys, step, data = self.read_lammps_ave("%s/matter.txt"%(input_dir))
             if len(self.data_step_) != len(step) or ((self.data_step_-step)**2).sum() > 0.0: raise TimestepException
             if len(select_matter) == 0:
@@ -45,6 +48,7 @@ class MDSequenceData:
             matter_data = data
 
             # read matter sum
+            print("Reading %s/matter_sum_list.txt..."%(input_dir))
             with open("%s/matter_sum_list.txt"%(input_dir), 'r') as fin:
                 matter_sum_data = torch.tensor([float(i) for i in fin.readline().strip().split()])
             
@@ -52,7 +56,8 @@ class MDSequenceData:
             pe_sum_data = []
             stress_sum_data = []
             step = []
-            with open("%s/log.lammps"%(input_dir), 'r') as fin:
+            print("Reading %s/%s..."%(input_dir, log_filename))
+            with open("%s/%s"%(input_dir, log_filename), 'r') as fin:
                 for aline in fin:
                     if "Step f_avg_sys_pe[1]" in aline: break
                 fin.readline()
