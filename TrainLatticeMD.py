@@ -129,7 +129,6 @@ class TrainLatticeMD:
                                                                         matter_sum_data*self.dataset_matter_sum_prefactor_[training_index], \
                                                                         stress_pe_sum_data[:, -1, :]*self.dataset_stress_pe_sum_prefactor_[training_index])
 
-                #print("%.4f %.4f %.4f %.4f"%(matter_sum_loss.item(), stress_pe_loss.item(), matter_sum_loss.item(), stress_pe_sum_loss.item()))
                 loss = matter_sum_loss + stress_pe_loss + matter_sum_loss + stress_pe_sum_loss
                 if not test_fg:
                     loss.backward()
@@ -137,6 +136,7 @@ class TrainLatticeMD:
 
                 loss_avg += loss.detach().cpu()*batch_size
         
+        print("%.4f %.4f %.4f %.4f"%(matter_sum_loss.item(), stress_pe_loss.item(), matter_sum_loss.item(), stress_pe_sum_loss.item()))
         return loss_avg/total_n_frames
 
     def train(self):
