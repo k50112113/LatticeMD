@@ -87,7 +87,7 @@ class MDSequenceData:
         matter_data *= matter_data_normalization_factor.unsqueeze(1)
         
         #compute prefactor
-        self.matter_prefactor_ = 1.0/matter_data.mean(dim = (0, 1))
+        self.matter_prefactor_ = 1.0/matter_data.std(dim = (0, 1))
         self.stress_prefactor_ = 1.0/stress_data.std(dim = (0, 1), unbiased = False)
         self.pe_prefactor_ = 1.0/pe_data.std(dim = (0, 1), unbiased = False)
         self.matter_sum_prefactor_ = 1.0/matter_sum_data
