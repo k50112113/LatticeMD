@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import os
+from Autoencoder import ConvAutoencoder, MLPAutoencoder, DummyAutoencoder
 #torch.set_default_tensor_type(torch.FloatTensor)
 torch.set_default_tensor_type(torch.DoubleTensor)
 
@@ -25,14 +26,14 @@ class MDSequenceData:
             if self.system_dim3_ != data.shape[1]: raise DimensionalityException
             pe_data = data
             
-            # read stress, virial stress tensor divided by the volume of the simulation box of each chunk. [unit: atm]
+            # read stress, virial stress tensor of each chunk. [unit: atm]
             print("Reading %s/stress.txt..."%(input_dir))
             keys, step, data = self.read_lammps_ave("%s/stress.txt"%(input_dir))
             if len(self.data_step_) != len(step) or ((self.data_step_-step)**2).sum() > 0.0: raise TimestepException
             if len(keys) != 6:  raise NumberOfElementsException
             if self.system_dim3_ != data.shape[1]: raise DimensionalityException
             stress_data = data
-            
+
             # read matter, amount of the matter of each chunk. [unit: #]
             print("Reading %s/matter.txt..."%(input_dir))
             keys, step, data = self.read_lammps_ave("%s/matter.txt"%(input_dir))
@@ -177,50 +178,6 @@ class LatticeMDDataset(torch.utils.data.Dataset):
     def __getitem__(self, index):
         return self.matter_sequence_data_[index], self.nonmatter_sequence_data_[index], self.matter_sum_data_[index], self.nonmatter_sum_data_[index]
 
-class MatterImageAutoencoder(nn.Module):
-    def __init__(self, number_of_matters, matter_conv_layer_kernal_size, matter_conv_layer_stride):
-        super(MatterImageAutoencoder, self).__init__()
-        if len(matter_conv_layer_kernal_size) != len(matter_conv_layer_stride):
-            print("Error: matter_conv_layer_kernal_size and matter_conv_layer_stride should have the same sizes.")
-
-        self.matter_conv_layer_ = nn.ModuleList()   # dim_out = (dim_in - 1 - (kernal_size-1))//stride + 1
-        self.matter_deconv_layer_ = nn.ModuleList() # dim_out = (dim_in - 1                  ) *stride + 1 + (kernal_size-1)
-        self.number_of_conv_layer_ = len(matter_conv_layer_kernal_size)
-
-        for index in range(self.number_of_conv_layer_):
-            self.matter_conv_layer_.append(nn.Conv3d(number_of_matters, number_of_matters, matter_conv_layer_kernal_size[index], stride = matter_conv_layer_stride[index]))
-        for stride in range(self.number_of_conv_layer_):
-            self.matter_deconv_layer_.append(nn.ConvTranspose3d(number_of_matters, number_of_matters, matter_conv_layer_kernal_size[index], stride = matter_conv_layer_stride[index]))
-
-        self.actv_ = nn.ReLU()
-
-    def encode(self, x):
-        #x: (batch_size, number_of_matters, matter_dim, matter_dim, matter_dim)
-        y = x
-        for index in range(self.number_of_conv_layer_ - 1):
-            y = self.matter_conv_layer_[index](y)
-            y = self.actv_(y)
-        y = self.matter_conv_layer_[-1](y)
-        return y
-    
-    def decode(self, y):
-        x = y
-        for index in range(self.number_of_conv_layer_ - 1):
-            x = self.matter_deconv_layer_[index](x)
-            x = self.actv_(x)
-        x = self.matter_deconv_layer_[-1](x)
-        return x
-    
-    def forward(self, x):
-        return self.decode(self.encode(x))
-
-class DummyAutoencoder:
-    def __init__(self):   pass
-    def encode(self, x):  return x
-    def decode(self, x):  return x
-    def parameters(self): return list()
-    def to(self, device): pass
-
 class LatticeMD(nn.Module):
     #This is a LSTM model which predicts: rho(t), S(t), and V(t).
     #
@@ -233,9 +190,16 @@ class LatticeMD(nn.Module):
     # number_of_matters:             int
     # matter_dim:                    int
     # matter_conv_layer_kernal_size: (int, ...)
-    # matter_conv_layer_kernal_size: (int, ...)
+    # matter_conv_layer_stride:      (int, ...)
+    # matter_conv_layer_stride:      (int, ...)
+    # matter_linear_encoded_size:    int
+    # number_of_nonmatter_features:  int
+    # nonmatter_decoder_layer_size:  (int, ...)
     #
-    def __init__(self, number_of_matters, matter_dim, matter_conv_layer_kernal_size = (), matter_conv_layer_stride = (), number_of_nonmatter_features = 7, nonmatter_decoder_layer_size = (2, 2)):
+    def __init__(self, number_of_matters, matter_dim, \
+                 matter_conv_layer_kernal_size = (), matter_conv_layer_stride = (), \
+                 matter_linear_layer_size = (16, 16), matter_linear_encoded_size = 16, \
+                 number_of_nonmatter_features = 7, nonmatter_decoder_layer_size = (16, 16)):
         super(LatticeMD, self).__init__()
         if len(matter_conv_layer_kernal_size) != len(matter_conv_layer_stride):
             print("Error: matter_conv_layer_kernal_size and matter_conv_layer_stride should have the same sizes.")
@@ -246,14 +210,22 @@ class LatticeMD(nn.Module):
         self.number_of_neighbor_block_ = 6 + 1
         self.number_of_nonmatter_features_ = number_of_nonmatter_features # default: stress tensor and pe
         
-        self.matter_encoded_dim_ = matter_dim
         if len(matter_conv_layer_kernal_size) > 0:
-            self.matter_ae_ = MatterImageAutoencoder(number_of_matters, matter_conv_layer_kernal_size, matter_conv_layer_stride)
+            self.matter_ae_type_ = 0
+            self.matter_encoded_dim_ = matter_dim
+            self.matter_ae_ = ConvAutoencoder(number_of_matters, matter_conv_layer_kernal_size, matter_conv_layer_stride)
             for index in range(len(matter_conv_layer_kernal_size)): self.matter_encoded_dim_ = (self.matter_encoded_dim_ - 1 - (matter_conv_layer_kernal_size[index]-1))//matter_conv_layer_stride[index] + 1
             self.matter_encoded_dim_ = matter_encoded_dim
+            self.matter_encoded_flatten_dim_ = self.number_of_matters_ * self.matter_encoded_dim_**3
+        elif len(matter_linear_layer_size) > 0:
+            self.matter_ae_type_ = 1
+            input_size = self.number_of_matters_ * self.matter_dim_**3
+            self.matter_ae_ = MLPAutoencoder(input_size, matter_linear_encoded_size, list(matter_linear_layer_size))
+            self.matter_encoded_flatten_dim_ = matter_linear_encoded_size
         else:
+            self.matter_ae_type_ = 2
             self.matter_ae_ = DummyAutoencoder()
-        self.matter_encoded_flatten_dim_ = self.number_of_matters_ * self.matter_encoded_dim_**3
+            self.matter_encoded_flatten_dim_ = self.number_of_matters_ * self.matter_dim_**3
 
         self.lstm_out_dim_ = self.matter_encoded_flatten_dim_ + self.number_of_nonmatter_features_
         self.lstm_in_dim_ = self.number_of_neighbor_block_ * self.lstm_out_dim_
@@ -286,7 +258,8 @@ class LatticeMD(nn.Module):
         print("%35s%d"%("Number of Neighbor Block: ", self.number_of_neighbor_block_))
         print("%35s%d"%("Number of Non-matter features: ", self.number_of_nonmatter_features_))
         print("%35s%d, %d, %d, %d"%("Matter Image dim: ", self.number_of_matters_, self.matter_dim_, self.matter_dim_, self.matter_dim_))
-        print("%35s%d, %d, %d, %d"%("Matter Image Encoded dim: ", self.number_of_matters_, self.matter_encoded_dim_, self.matter_encoded_dim_, self.matter_encoded_dim_))
+        print("%35s%10s"%("Matter Autoencoder type: ", "Conv" if self.matter_ae_type_ == 0 else "MLP"))
+        print("%35s%d"%("Matter Image Encoded flat dim: ", self.matter_encoded_flatten_dim_))
         print("%35s%3d <- (%d*%d^3+%d)*%d"%("LSTM input dim: ", self.lstm_in_dim_, self.number_of_matters_, self.matter_dim_, self.number_of_nonmatter_features_, self.number_of_neighbor_block_))
         print("%35s%3d <- (%d*%d^3+%d)"%("LSTM output dim: ", self.lstm_out_dim_, self.number_of_matters_, self.matter_dim_, self.number_of_nonmatter_features_))
         
@@ -328,18 +301,24 @@ class LatticeMD(nn.Module):
     def encode(self, matter_sequence, nonmatter_sequence):
         #matter_sequence:           (sequence_length, batch_size * system_dim3, number_of_matters, matter_dim, matter_dim, matter_dim)
         #nonmatter_sequence:        (sequence_length, batch_size * system_dim3, number_of_nonmatter_features)
-        matter = matter_sequence.flatten(start_dim = 0, end_dim = 1)                       #(sequence_length * batch_size * system_dim3, number_of_matters, matter_dim, matter_dim, matter_dim)
-        matter_encoded = self.matter_ae_.encode(matter).flatten(start_dim = 2)             #(sequence_length * batch_size * system_dim3, matter_encoded_flatten_dim)
+        matter = matter_sequence.flatten(start_dim = 0, end_dim = 1)                                            #(sequence_length * batch_size * system_dim3, number_of_matters, matter_dim, matter_dim, matter_dim)
+        if self.matter_ae_type_ == 1:
+            matter_encoded = self.matter_ae_.encode(matter.flatten(start_dim = 1))                              #(sequence_length * batch_size * system_dim3, matter_encoded_flatten_dim)
+        else:
+            matter_encoded = self.matter_ae_.encode(matter).flatten(start_dim = 1)                              #(sequence_length * batch_size * system_dim3, number_of_matters, matter_encoded_dim, matter_encoded_dim, matter_encoded_dim)
         matter_encoded = matter_encoded.view(len(nonmatter_sequence), -1, self.matter_encoded_flatten_dim_) #(sequence_length,  batch_size * system_dim3, matter_encoded_flatten_dim)
         encoded_in = torch.cat((matter_encoded, nonmatter_sequence), dim = -1)             #(sequence_length,  batch_size * system_dim3, lstm_out_dim)
         return encoded_in
     
     def decode(self, lstm_out):
         #lstm_out:                  (batch_size * system_dim3, lstm_out_dim)
-        
-        matter_encoded = lstm_out[:, :self.matter_encoded_flatten_dim_].view(-1, self.number_of_matters_, self.matter_encoded_dim_, self.matter_encoded_dim_, self.matter_encoded_dim_) #(batch_size * system_dim3, number_of_matters, matter_encoded_dim, matter_encoded_dim, matter_encoded_dim)
-        matter = self.matter_ae_.decode(matter_encoded) #(batch_size * system_dim3, number_of_matters, matter_dim, matter_dim, matter_dim)
-        
+        if self.matter_ae_type_ == 1:
+            matter_encoded = lstm_out[:, :self.matter_encoded_flatten_dim_]  #(batch_size * system_dim3, matter_encoded_flatten_dim)
+            matter = self.matter_ae_.decode(matter_encoded) #(batch_size * system_dim3, number_of_matters * matter_dim * matter_dim * matter_dim)
+            matter = matter.view(-1, self.number_of_matters_, self.matter_dim_, self.matter_dim_, self.matter_dim_) #(batch_size * system_dim3, number_of_matters, matter_dim, matter_dim, matter_dim)
+        else:
+            matter_encoded = lstm_out[:, :self.matter_encoded_flatten_dim_].view(-1, self.number_of_matters_, self.matter_encoded_dim_, self.matter_encoded_dim_, self.matter_encoded_dim_) #(batch_size * system_dim3, number_of_matters, matter_encoded_dim, matter_encoded_dim, matter_encoded_dim)
+            matter = self.matter_ae_.decode(matter_encoded) #(batch_size * system_dim3, number_of_matters, matter_dim, matter_dim, matter_dim)
         nonmatter = lstm_out[:, self.matter_encoded_flatten_dim_:] #(batch_size * system_dim3, number_of_nonmatter_features)
         for index in range(self.number_of_nonmatter_decoder_layer_ - 1):
             nonmatter = self.nonmatter_decoder_[index](nonmatter)
