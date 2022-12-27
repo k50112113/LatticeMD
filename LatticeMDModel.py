@@ -32,7 +32,6 @@ class MDSequenceData:
             if len(keys) != 6:  raise NumberOfElementsException
             if self.system_dim3_ != data.shape[1]: raise DimensionalityException
             stress_data = data
-            stress_data *= self.system_dim3_ #convert [stress/total volume] to [stress/chunk volume]
             
             # read matter, amount of the matter of each chunk. [unit: #]
             print("Reading %s/matter.txt..."%(input_dir))
