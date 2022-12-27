@@ -23,7 +23,7 @@ class MDSequenceData:
             if len(keys) != 1: raise NumberOfElementsException
             if self.system_dim3_ != data.shape[1]: raise DimensionalityException
             pe_data = data
-
+            
             # read stress
             keys, step, data = self.read_lammps_ave("%s/stress.txt"%(input_dir))
             if len(self.data_step_) != len(step) or ((self.data_step_-step)**2).sum() > 0.0: raise TimestepException
@@ -54,7 +54,7 @@ class MDSequenceData:
             step = []
             with open("%s/log.lammps"%(input_dir), 'r') as fin:
                 for aline in fin:
-                    if "Step PotEng Pxx Pyy Pzz Pxy Pxz Pyz" in aline: break
+                    if "Step f_avg_sys_pe[1]" in aline: break
                 fin.readline()
                 for aline in fin:
                     if "Loop" in aline: break
@@ -230,7 +230,7 @@ class LatticeMD(nn.Module):
     # matter_conv_layer_kernal_size: (int, ...)
     # matter_conv_layer_kernal_size: (int, ...)
     #
-    def __init__(self, number_of_matters, matter_dim, matter_conv_layer_kernal_size = (), matter_conv_layer_stride = (), number_of_nonmatter_features = 7):
+    def __init__(self, number_of_matters, matter_dim, matter_conv_layer_kernal_size = (), matter_conv_layer_stride = (), number_of_nonmatter_features = 7, nonmatter_decoder_layer_size = (2, 2)):
         super(LatticeMD, self).__init__()
         if len(matter_conv_layer_kernal_size) != len(matter_conv_layer_stride):
             print("Error: matter_conv_layer_kernal_size and matter_conv_layer_stride should have the same sizes.")
@@ -254,15 +254,24 @@ class LatticeMD(nn.Module):
         self.lstm_in_dim_ = self.number_of_neighbor_block_ * self.lstm_out_dim_
         self.lstm_ = nn.LSTM(self.lstm_in_dim_, self.lstm_out_dim_)
 
+        nonmatter_decoder_layer_size = [self.number_of_nonmatter_features_] + list(nonmatter_decoder_layer_size) + [self.number_of_nonmatter_features_]
+        self.number_of_nonmatter_decoder_layer_ = len(nonmatter_decoder_layer_size) - 1
+        self.nonmatter_decoder_ = nn.ModuleList()
+        for index in range(self.number_of_nonmatter_decoder_layer_):
+            self.nonmatter_decoder_.append(nn.Linear(nonmatter_decoder_layer_size[index], nonmatter_decoder_layer_size[index + 1]))
+        self.nonmatter_decoder_actv_ = nn.SiLU()
+
         self.param  = list()
         self.param += list(self.matter_ae_.parameters())
         self.param += list(self.lstm_.parameters())
+        self.param  += list(self.nonmatter_decoder_.parameters())
 
         self.print_info()
 
     def to(self, device):
         self.matter_ae_.to(device)
         self.lstm_.to(device)
+        self.nonmatter_decoder_.to(device)
 
     def parameters(self):
         return self.param
@@ -275,7 +284,7 @@ class LatticeMD(nn.Module):
         print("%35s%d, %d, %d, %d"%("Matter Image Encoded dim: ", self.number_of_matters_, self.matter_encoded_dim_, self.matter_encoded_dim_, self.matter_encoded_dim_))
         print("%35s%3d <- (%d*%d^3+%d)*%d"%("LSTM input dim: ", self.lstm_in_dim_, self.number_of_matters_, self.matter_dim_, self.number_of_nonmatter_features_, self.number_of_neighbor_block_))
         print("%35s%3d <- (%d*%d^3+%d)"%("LSTM output dim: ", self.lstm_out_dim_, self.number_of_matters_, self.matter_dim_, self.number_of_nonmatter_features_))
-
+        
     def forward(self, matter_sequence, nonmatter_sequence, system_dim, matter_normalization = False):
         #input
         #   matter_sequence:        (sequence_length, batch_size * system_dim3, number_of_matters, matter_dim, matter_dim, matter_dim)
@@ -322,9 +331,16 @@ class LatticeMD(nn.Module):
     
     def decode(self, lstm_out):
         #lstm_out:                  (batch_size * system_dim3, lstm_out_dim)
+        
         matter_encoded = lstm_out[:, :self.matter_encoded_flatten_dim_].view(-1, self.number_of_matters_, self.matter_encoded_dim_, self.matter_encoded_dim_, self.matter_encoded_dim_) #(batch_size * system_dim3, number_of_matters, matter_encoded_dim, matter_encoded_dim, matter_encoded_dim)
         matter = self.matter_ae_.decode(matter_encoded) #(batch_size * system_dim3, number_of_matters, matter_dim, matter_dim, matter_dim)
+        
         nonmatter = lstm_out[:, self.matter_encoded_flatten_dim_:] #(batch_size * system_dim3, number_of_nonmatter_features)
+        for index in range(self.number_of_nonmatter_decoder_layer_ - 1):
+            nonmatter = self.nonmatter_decoder_[index](nonmatter)
+            nonmatter = self.nonmatter_decoder_actv_(nonmatter)
+        nonmatter = self.nonmatter_decoder_[-1](nonmatter)
+
         return matter, nonmatter
     
     def matter_normalize(self, matter, system_dim):

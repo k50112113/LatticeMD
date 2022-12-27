@@ -56,10 +56,10 @@ class TrainLatticeMD:
         self.lattice_md_.to(self.device_)
         # batch_size = 10
         # matter_sequence           = self.batched_data_sequence_to_model_input(self.matter_sequence_data_[:batch_size])
-        # stress_pe_sequence = self.batched_data_sequence_to_model_input(self.stress_pe_sequence_data_[:batch_size])
-        # print(matter_sequence.shape, stress_pe_sequence.shape)
-        # predicted_matter, predicted_stress_pe = lmd(matter_sequence, stress_pe_sequence, system_dim, matter_normalization = False)
-        # print(predicted_matter.shape, predicted_stress_pe.shape)
+        # nonmatter_sequence = self.batched_data_sequence_to_model_input(self.nonmatter_sequence_data_[:batch_size])
+        # print(matter_sequence.shape, nonmatter_sequence.shape)
+        # predicted_matter, predicted_nonmatter = lmd(matter_sequence, nonmatter_sequence, system_dim, matter_normalization = False)
+        # print(predicted_matter.shape, predicted_nonmatter.shape)
 
     def batched_data_sequence_to_model_input(self, x):
         #input:
@@ -78,10 +78,10 @@ class TrainLatticeMD:
             self.optimization = torch.optim.SGD(self.lattice_md_.parameters(), lr=self.learning_rate_start_, momentum = 0.3 ,dampening = 0.01, weight_decay = self.weight_decay_)
         self.learning_rate_schedule = torch.optim.lr_scheduler.LambdaLR(self.optimization, lr_lambda=lambda epoch: self.learning_rate_lambda_table_[epoch])
 
-    def compute_loss(self, predicted_matter, predicted_stress_pe, labeled_matter, labeled_stress_pe):
+    def compute_loss(self, predicted_matter, predicted_nonmatter, labeled_matter, labeled_nonmatter):
         matter_loss = self.loss_function_(predicted_matter, labeled_matter)
-        stress_pe_loss = self.loss_function_(predicted_stress_pe, labeled_stress_pe)
-        return matter_loss, stress_pe_loss
+        nonmatter_loss = self.loss_function_(predicted_nonmatter, labeled_nonmatter)
+        return matter_loss, nonmatter_loss
 
     def run_epoch(self, ith_epoch, test_fg = False):
         if test_fg: loader = self.test_loader_
@@ -96,7 +96,7 @@ class TrainLatticeMD:
             system_dim = self.dataset_system_dim_[training_index]
             system_dim3 = system_dim[0]*system_dim[1]*system_dim[2]
             total_n_frames += 0
-            for matter_sequence_data, stress_pe_sequence_data, matter_sum_data, stress_pe_sum_data in loader[training_index]:
+            for matter_sequence_data, nonmatter_sequence_data, matter_sum_data, nonmatter_sum_data in loader[training_index]:
                 
                 if not test_fg: self.optimization.zero_grad()
                 
@@ -106,31 +106,41 @@ class TrainLatticeMD:
                 #reshape input from batch-first to sequence-first
                 #flatten batch and system_dim dimensions
                 matter_sequence    = self.batched_data_sequence_to_model_input(matter_sequence_data)
-                stress_pe_sequence = self.batched_data_sequence_to_model_input(stress_pe_sequence_data)
+                nonmatter_sequence = self.batched_data_sequence_to_model_input(nonmatter_sequence_data)
+
+                print(nonmatter_sequence[0].shape)
+                print(nonmatter_sum_data[0,0].shape)
+                a = nonmatter_sequence[0].sum(dim = 0)
+                b = nonmatter_sum_data[0,0]
+                print(b[-1]/a[-1]*64)
+                print(b[:-1]/a[:-1]*1000000)
+
+
+                exit()
                 
                 #split sequence into input (t = 0~sequence_length-1) and output (t = last element)
                 matter_sequence_in = matter_sequence[:-1]
-                stress_pe_sequence_in = stress_pe_sequence[:-1]
+                nonmatter_sequence_in = nonmatter_sequence[:-1]
                 labeled_matter = matter_sequence[-1]
-                labeled_stress_pe = stress_pe_sequence[-1]
+                labeled_nonmatter = nonmatter_sequence[-1]
 
-                predicted_matter, predicted_stress_pe = self.lattice_md_(matter_sequence_in, stress_pe_sequence_in, system_dim, matter_normalization = False)
+                predicted_matter, predicted_nonmatter = self.lattice_md_(matter_sequence_in, nonmatter_sequence_in, system_dim, matter_normalization = False)
                 
-                matter_loss, stress_pe_loss = self.compute_loss(predicted_matter.permute(0, 2, 3, 4, 1)*self.dataset_matter_prefactor_[training_index], \
-                                                                predicted_stress_pe*self.dataset_stress_pe_prefactor_[training_index], \
+                matter_loss, nonmatter_loss = self.compute_loss(predicted_matter.permute(0, 2, 3, 4, 1)*self.dataset_matter_prefactor_[training_index], \
+                                                                predicted_nonmatter*self.dataset_nonmatter_prefactor_[training_index], \
                                                                 labeled_matter*self.dataset_matter_prefactor_[training_index], \
-                                                                labeled_stress_pe*self.dataset_stress_pe_prefactor_[training_index])
+                                                                labeled_nonmatter*self.dataset_nonmatter_prefactor_[training_index])
                 
                 predicted_matter_sum = predicted_matter.view(batch_size, system_dim3, self.number_of_matters_, self.matter_dim_, self.matter_dim_, self.matter_dim_).sum(dim = (1, 3, 4, 5))
-                predicted_stress_pe_sum = predicted_stress_pe.view(batch_size, system_dim3, 7).sum(dim = 1)
+                predicted_nonmatter_sum = predicted_nonmatter.view(batch_size, system_dim3, 7).sum(dim = 1)
                 
-                matter_sum_loss, stress_pe_sum_loss = self.compute_loss(predicted_matter_sum*self.dataset_matter_sum_prefactor_[training_index], \
-                                                                        predicted_stress_pe_sum*self.dataset_stress_pe_sum_prefactor_[training_index], \
+                matter_sum_loss, nonmatter_sum_loss = self.compute_loss(predicted_matter_sum*self.dataset_matter_sum_prefactor_[training_index], \
+                                                                        predicted_nonmatter_sum*self.dataset_nonmatter_sum_prefactor_[training_index], \
                                                                         matter_sum_data*self.dataset_matter_sum_prefactor_[training_index], \
-                                                                        stress_pe_sum_data[:, -1, :]*self.dataset_stress_pe_sum_prefactor_[training_index])
+                                                                        nonmatter_sum_data[:, -1, :]*self.dataset_nonmatter_sum_prefactor_[training_index])
 
-                #print("%.4f %.4f %.4f %.4f"%(matter_sum_loss.item(), stress_pe_loss.item(), matter_sum_loss.item(), stress_pe_sum_loss.item()))
-                loss = matter_sum_loss + stress_pe_loss + matter_sum_loss + stress_pe_sum_loss
+                print("%.4f %.4f %.4f %.4f"%(matter_sum_loss.item(), nonmatter_loss.item(), matter_sum_loss.item(), nonmatter_sum_loss.item()))
+                loss = matter_sum_loss + nonmatter_loss + matter_sum_loss + nonmatter_sum_loss
                 if not test_fg:
                     loss.backward()
                     self.optimization.step()
@@ -189,9 +199,9 @@ class TrainLatticeMD:
             self.dataset_number_of_samples_ = []
             
             self.dataset_matter_prefactor_ = []
-            self.dataset_stress_pe_prefactor_ = []
+            self.dataset_nonmatter_prefactor_ = []
             self.dataset_matter_sum_prefactor_ = []
-            self.dataset_stress_pe_sum_prefactor_ = []
+            self.dataset_nonmatter_sum_prefactor_ = []
 
             self.train_loader_ = []
             self.test_loader_ = []
@@ -217,17 +227,17 @@ class TrainLatticeMD:
                     self.matter_dim_        = matter_dim_tmp
                     self.sequence_length_   = sequence_length_tmp
 
-                stress_pe_sequence_data_tmp = torch.cat((stress_sequence_data_tmp, pe_sequence_data_tmp), dim = -1)
-                stress_pe_sum_data_tmp = torch.cat((stress_sum_data_tmp, pe_sum_data_tmp), dim = -1)
+                nonmatter_sequence_data_tmp = torch.cat((stress_sequence_data_tmp, pe_sequence_data_tmp), dim = -1)
+                nonmatter_sum_data_tmp = torch.cat((stress_sum_data_tmp, pe_sum_data_tmp), dim = -1)
                 
                 self.dataset_matter_prefactor_.append(matter_prefactor.to(self.device_))
-                self.dataset_stress_pe_prefactor_.append(torch.cat((stress_prefactor,pe_prefactor)).to(self.device_))
+                self.dataset_nonmatter_prefactor_.append(torch.cat((stress_prefactor,pe_prefactor)).to(self.device_))
                 self.dataset_matter_sum_prefactor_.append(matter_sum_prefactor.to(self.device_))
-                self.dataset_stress_pe_sum_prefactor_.append(torch.cat((stress_sum_prefactor,pe_sum_prefactor)).to(self.device_))
+                self.dataset_nonmatter_sum_prefactor_.append(torch.cat((stress_sum_prefactor,pe_sum_prefactor)).to(self.device_))
 
                 self.dataset_number_of_samples_.append(len(matter_sequence_data_tmp))
                 self.dataset_system_dim_.append(system_dim_tmp)
-                dataset = LatticeMDDataset(matter_sequence_data_tmp, stress_pe_sequence_data_tmp, matter_sum_data_tmp, stress_pe_sum_data_tmp, device = self.device_)
+                dataset = LatticeMDDataset(matter_sequence_data_tmp, nonmatter_sequence_data_tmp, matter_sum_data_tmp, nonmatter_sum_data_tmp, device = self.device_)
                 
                 total_n_test_sample        = int(self.test_ratio_*self.dataset_number_of_samples_[-1])
                 total_n_train_sample       = self.dataset_number_of_samples_[-1] - total_n_test_sample
