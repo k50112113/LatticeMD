@@ -95,7 +95,7 @@ class TrainLatticeMD:
 
         total_n_frames = 0
         # self.optimization.zero_grad()
-        
+
         for training_index, training_data_dir in enumerate(self.training_data_dir_list_):
             number_of_samples = self.dataset_number_of_samples_[training_index]
             system_dim = self.dataset_system_dim_[training_index]
@@ -114,8 +114,9 @@ class TrainLatticeMD:
                 nonmatter_sequence = self.batched_data_sequence_to_model_input(nonmatter_sequence_data)
                 
                 #test with batch_size = 1
-                # print(nonmatter_sequence[-1].sum(dim = 0)[-1] - nonmatter_sum_data[0, -1, -1])
-                # print(nonmatter_sequence[-1].sum(dim = 0)[:-1] - nonmatter_sum_data[0, -1, :-1]*system_dim3)
+                # print(nonmatter_sequence[-1].sum(dim = 0)[-1]-nonmatter_sum_data[0, -1, -1])
+                # print(nonmatter_sequence[-1].sum(dim = 0)[:-1]-nonmatter_sum_data[0, -1, :-1])
+                # exit()
 
                 #split sequence into input (t = 0~sequence_length-1) and output (t = last element)
                 matter_sequence_in = matter_sequence[:-1]
@@ -125,33 +126,32 @@ class TrainLatticeMD:
                 predicted_matter_tmp, predicted_nonmatter_tmp = self.lattice_md_(matter_sequence_in, nonmatter_sequence_in, system_dim, matter_normalization = False)
                 
                 #compute loss
-                predicted_matter     = predicted_matter_tmp#*self.dataset_matter_prefactor_[training_index]
+                predicted_matter     = predicted_matter_tmp*self.dataset_matter_prefactor_[training_index]
                 predicted_nonmatter  = predicted_nonmatter_tmp*self.dataset_nonmatter_prefactor_[training_index]
-                labeled_matter       = matter_sequence[-1]#*self.dataset_matter_prefactor_[training_index]
+                labeled_matter       = matter_sequence[-1]*self.dataset_matter_prefactor_[training_index]
                 labeled_nonmatter    = nonmatter_sequence[-1]*self.dataset_nonmatter_prefactor_[training_index]
                 matter_loss          = self.compute_loss(predicted_matter.permute(0, 2, 3, 4, 1), labeled_matter)
                 nonmatter_loss       = self.compute_loss(predicted_nonmatter, labeled_nonmatter)
-                
+
                 #compute sum_loss
-                predicted_matter_sum    = predicted_matter.view(batch_size, system_dim3, self.number_of_matters_, self.matter_dim_, self.matter_dim_, self.matter_dim_).sum(dim = (1, 3, 4, 5))#*self.dataset_matter_sum_prefactor_[training_index]
+                predicted_matter_sum    = predicted_matter.view(batch_size, system_dim3, self.number_of_matters_, self.matter_dim_, self.matter_dim_, self.matter_dim_).sum(dim = (1, 3, 4, 5))*self.dataset_matter_sum_prefactor_[training_index]
                 predicted_nonmatter_sum = predicted_nonmatter.view(batch_size, system_dim3, 7).sum(dim = 1)*self.dataset_nonmatter_sum_prefactor_[training_index]
-                labeled_matter_sum = matter_sum_data#*self.dataset_matter_sum_prefactor_[training_index]
-                nonmatter_sum_data[:, -1, :-1] *= system_dim3 #convert stress of the simulation box into stress of a chunk
+                labeled_matter_sum = matter_sum_data*self.dataset_matter_sum_prefactor_[training_index]
                 labeled_nonmatter_sum = nonmatter_sum_data[:, -1, :]*self.dataset_nonmatter_sum_prefactor_[training_index]
                 # print(labeled_nonmatter.sum(dim = 0) - nonmatter_sum_data[:, -1, :])
                 matter_sum_loss    = self.compute_loss(predicted_matter_sum, labeled_matter_sum)
                 nonmatter_sum_loss = self.compute_loss(predicted_nonmatter_sum, labeled_nonmatter_sum)
-                print(predicted_matter)
-                exit()
-                # print("%.4e %.4e %.4e %.4e"%(matter_sum_loss.item(), nonmatter_loss.item(), matter_sum_loss.item(), nonmatter_sum_loss.item()))
-                loss = 0.01*matter_sum_loss + nonmatter_loss + 0.01*matter_sum_loss + nonmatter_sum_loss
+                
+                # print("%.4e %.4e %.4e %.4e"%(matter_loss.item(), nonmatter_loss.item(), matter_sum_loss.item(), nonmatter_sum_loss.item()))
+                loss = matter_loss + nonmatter_loss + matter_sum_loss + nonmatter_sum_loss
                 if not test_fg:
                     loss.backward()
                     self.optimization.step()
 
                 loss_avg += loss.detach().cpu()*batch_size
         
-        print("%.4e %.4e %.4e %.4e"%(matter_sum_loss.item(), nonmatter_loss.item(), matter_sum_loss.item(), nonmatter_sum_loss.item()))
+        print("\t\t\t\t\t\t\t\t\t%.4e %.4e %.4e %.4e"%(matter_sum_loss.item(), nonmatter_loss.item(), matter_sum_loss.item(), nonmatter_sum_loss.item()))
+        
         return loss_avg/total_n_frames
 
     def train(self):

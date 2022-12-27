@@ -86,13 +86,17 @@ class MDSequenceData:
         matter_data_normalization_factor = matter_sum_data/matter_data.sum(dim = 1)
         matter_data *= matter_data_normalization_factor.unsqueeze(1)
         
+        #convert S*V/V to S*V/v
+        #stress_data *= self.system_dim3_
+        #stress_sum_data *= self.system_dim3_
+
         #compute prefactor
-        self.matter_prefactor_ = 1.0/matter_data.std(dim = (0, 1))
-        self.stress_prefactor_ = 1.0/stress_data.std(dim = (0, 1), unbiased = False)
-        self.pe_prefactor_ = 1.0/pe_data.std(dim = (0, 1), unbiased = False)
+        self.matter_prefactor_ = 1.0/(matter_data.std(dim = (0, 1)))
+        self.stress_prefactor_ = 1.0/(stress_data.std(dim = (0, 1), unbiased = False)) 
+        self.pe_prefactor_ = 1.0/(pe_data.std(dim = (0, 1), unbiased = False))
         self.matter_sum_prefactor_ = 1.0/matter_sum_data
-        self.stress_sum_prefactor_ = 1.0/stress_sum_data.std(dim = 0, unbiased = False)
-        self.pe_sum_prefactor_ = 1.0/pe_sum_data.std(dim = 0, unbiased = False)
+        self.stress_sum_prefactor_ = 1.0/(stress_sum_data.std(dim = 0, unbiased = False))
+        self.pe_sum_prefactor_ = 1.0/(pe_sum_data.std(dim = 0, unbiased = False))
 
         #split data into sequences
         self.matter_sequence_data_ = self.split_data_sequence(matter_data,     self.sequence_length_+1, sequence_start_indices)
