@@ -17,7 +17,7 @@ class MDSequenceData:
         if os.path.isdir(self.output_dir_) == False: os.system("mkdir -p %s"%(self.output_dir_))
         
         try:
-            # read pe
+            # read pe: potential energy of each chunk. [unit: kcal/mole]
             print("Reading %s/pe.txt..."%(input_dir))
             keys, step, data = self.read_lammps_ave("%s/pe.txt"%(input_dir))
             self.data_step_ = step
@@ -25,15 +25,16 @@ class MDSequenceData:
             if self.system_dim3_ != data.shape[1]: raise DimensionalityException
             pe_data = data
             
-            # read stress
+            # read stress, virial stress tensor divided by the volume of the simulation box of each chunk. [unit: atm]
             print("Reading %s/stress.txt..."%(input_dir))
             keys, step, data = self.read_lammps_ave("%s/stress.txt"%(input_dir))
             if len(self.data_step_) != len(step) or ((self.data_step_-step)**2).sum() > 0.0: raise TimestepException
             if len(keys) != 6:  raise NumberOfElementsException
             if self.system_dim3_ != data.shape[1]: raise DimensionalityException
             stress_data = data
+            stress_data *= self.system_dim3_ #convert [stress/total volume] to [stress/chunk volume]
             
-            # read matter
+            # read matter, amount of the matter of each chunk. [unit: #]
             print("Reading %s/matter.txt..."%(input_dir))
             keys, step, data = self.read_lammps_ave("%s/matter.txt"%(input_dir))
             if len(self.data_step_) != len(step) or ((self.data_step_-step)**2).sum() > 0.0: raise TimestepException

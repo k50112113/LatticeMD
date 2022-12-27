@@ -112,8 +112,9 @@ class TrainLatticeMD:
                 print(nonmatter_sum_data[0,0].shape)
                 a = nonmatter_sequence[0].sum(dim = 0)
                 b = nonmatter_sum_data[0,0]
-                print(b[-1]/a[-1]*64)
-                print(b[:-1]/a[:-1]*1000000)
+                print(a, b)
+                print(b[-1]/a[-1])
+                print(b[:-1]/a[:-1])
 
 
                 exit()
