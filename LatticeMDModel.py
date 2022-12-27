@@ -10,7 +10,7 @@ class TimestepException(Exception): pass
 class NumberOfElementsException(Exception): pass
 
 class MDSequenceData:
-    def __init__(self, input_dir, system_dim, sequence_length, sequence_start_indices = [0], output_dir='./', select_matter = (), log_filename = 'log.lammps'):
+    def __init__(self, input_dir, system_dim, sequence_length, sequence_start_indices = [0], output_dir='./', select_matter = (), log_filename = 'log.lammps', moving_average_length = 1):
         self.output_dir_ = output_dir
         self.system_dim_ = system_dim
         self.system_dim3_ = system_dim[0]*system_dim[1]*system_dim[2]
@@ -85,6 +85,13 @@ class MDSequenceData:
         
         matter_data_normalization_factor = matter_sum_data/matter_data.sum(dim = 1)
         matter_data *= matter_data_normalization_factor.unsqueeze(1)
+
+        if moving_average_length > 1:
+            matter_data     = self.moving_average(matter_data,     moving_average_length)[moving_average_length-1::moving_average_length]
+            stress_data     = self.moving_average(stress_data,     moving_average_length)[moving_average_length-1::moving_average_length]
+            pe_data         = self.moving_average(pe_data,         moving_average_length)[moving_average_length-1::moving_average_length]
+            stress_sum_data = self.moving_average(stress_sum_data, moving_average_length)[moving_average_length-1::moving_average_length]
+            pe_sum_data     = self.moving_average(pe_sum_data,     moving_average_length)[moving_average_length-1::moving_average_length]
         
         #convert S*V/V to S*V/v
         #stress_data *= self.system_dim3_
@@ -101,7 +108,9 @@ class MDSequenceData:
         #split data into sequences
         self.matter_sequence_data_ = self.split_data_sequence(matter_data,     self.sequence_length_+1, sequence_start_indices)
         self.number_of_batches_    = len(self.matter_sequence_data_)
-        self.matter_sequence_data_ = self.matter_sequence_data_.view(self.number_of_batches_, self.sequence_length_+1, self.system_dim3_, self.matter_dim_, self.matter_dim_, self.matter_dim_, self.number_of_matters_).permute(0,1,2,6,3,4,5)
+        ss = self.sequence_length_ + 1
+        if ss == 0: ss = 1
+        self.matter_sequence_data_ = self.matter_sequence_data_.view(self.number_of_batches_, ss, self.system_dim3_, self.matter_dim_, self.matter_dim_, self.matter_dim_, self.number_of_matters_).permute(0,1,2,6,3,4,5)
         self.stress_sequence_data_     = self.split_data_sequence(stress_data,     self.sequence_length_+1, sequence_start_indices)
         self.pe_sequence_data_         = self.split_data_sequence(pe_data,         self.sequence_length_+1, sequence_start_indices)
         self.stress_sum_data_          = self.split_data_sequence(stress_sum_data, self.sequence_length_+1, sequence_start_indices)
@@ -125,7 +134,11 @@ class MDSequenceData:
         return self.matter_prefactor_,     self.stress_prefactor_,     self.pe_prefactor_,\
                self.matter_sum_prefactor_, self.stress_sum_prefactor_, self.pe_sum_prefactor_
 
+    def moving_average(self, x, moving_average_length, dim = 0):
+        return (x.cumsum(dim = dim)[moving_average_length:] - x.cumsum(dim = dim)[:-moving_average_length])/moving_average_length
+
     def split_data_sequence(self, data, sequence_length, sequence_start_indices):
+        if sequence_length == 0: return data
         split_data = None
         for sequence_start_index in sequence_start_indices:
             data_tmp = data[sequence_start_index:].split(sequence_length)

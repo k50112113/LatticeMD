@@ -212,8 +212,8 @@ class TrainLatticeMD:
             self.test_loader_ = []
 
             for training_index, training_data_dir in enumerate(self.training_data_dir_list_):
-                print("\tReading %s/MDSD.save..."%(training_data_dir))
-                fin = open("%s/MDSD.save"%(training_data_dir),"rb")
+                print("\tReading %s..."%(training_data_dir))
+                fin = open("%s"%(training_data_dir),"rb")
                 self.sd_ = dill.load(fin)
                 fin.close()
                 number_of_matters_tmp, matter_dim_tmp, system_dim_tmp, sequence_length_tmp, \
