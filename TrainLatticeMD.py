@@ -252,12 +252,12 @@ class TrainLatticeMD:
                 self.train_loader_.append(torch.utils.data.DataLoader(dataset=train_dataset, batch_size=self.batch_size_,shuffle=True))
                 self.test_loader_.append(torch.utils.data.DataLoader(dataset=test_dataset, batch_size=self.batch_size_,shuffle=False))
 
-                print("\t\tMatter prefactor        = %s"%(matter_prefactor.numpy()))
-                print("\t\tStress prefactor        = %s"%(stress_prefactor.numpy()))
-                print("\t\tPe     prefactor        = %s"%(pe_prefactor.numpy()))
-                print("\t\tMatter sum prefactor    = %s"%(matter_sum_prefactor.numpy()))
-                print("\t\tStress sum prefactor    = %s"%(stress_sum_prefactor.numpy()))
-                print("\t\tPe     sum prefactor    = %s"%(pe_sum_prefactor.numpy()))
+                # print("\t\tMatter prefactor        = %s"%(matter_prefactor.numpy()))
+                # print("\t\tStress prefactor        = %s"%(stress_prefactor.numpy()))
+                # print("\t\tPe     prefactor        = %s"%(pe_prefactor.numpy()))
+                # print("\t\tMatter sum prefactor    = %s"%(matter_sum_prefactor.numpy()))
+                # print("\t\tStress sum prefactor    = %s"%(stress_sum_prefactor.numpy()))
+                # print("\t\tPe     sum prefactor    = %s"%(pe_sum_prefactor.numpy()))
 
         except NumberOfMattersException:
             print("Number of matters should be the same for all training data.")

@@ -95,13 +95,6 @@ class MDSequenceData:
         matter_data_normalization_factor = matter_sum_data/matter_data.sum(dim = 1)
         matter_data *= matter_data_normalization_factor.unsqueeze(1)
 
-        # if moving_average_length > 1:
-        #     matter_data     = self.moving_average(matter_data,     moving_average_length)[moving_average_length-1::moving_average_length]
-        #     stress_data     = self.moving_average(stress_data,     moving_average_length)[moving_average_length-1::moving_average_length]
-        #     pe_data         = self.moving_average(pe_data,         moving_average_length)[moving_average_length-1::moving_average_length]
-        #     stress_sum_data = self.moving_average(stress_sum_data, moving_average_length)[moving_average_length-1::moving_average_length]
-        #     pe_sum_data     = self.moving_average(pe_sum_data,     moving_average_length)[moving_average_length-1::moving_average_length]
-        
         #convert S*V/V to S*V/v
         #stress_data *= self.system_dim3_
         #stress_sum_data *= self.system_dim3_
@@ -294,7 +287,7 @@ class LatticeMD(nn.Module):
         print("%35s%d"%("Number of Neighbor Block: ", self.number_of_neighbor_block_))
         print("%35s%d"%("Number of Non-matter features: ", self.number_of_nonmatter_features_))
         print("%35s%d, %d, %d, %d"%("Matter Image dim: ", self.number_of_matters_, self.matter_dim_, self.matter_dim_, self.matter_dim_))
-        print("%35s%10s"%("Matter Autoencoder type: ", "Conv" if self.matter_ae_type_ == 0 else "MLP"))
+        print("%35s%6s"%("Matter Autoencoder type: ", "Conv" if self.matter_ae_type_ == 0 else "MLP"))
         print("%35s%d"%("Matter Image Encoded flat dim: ", self.matter_encoded_flatten_dim_))
         print("%35s%3d <- (%d*%d^3+%d)*%d"%("LSTM input dim: ", self.lstm_in_dim_, self.number_of_matters_, self.matter_dim_, self.number_of_nonmatter_features_, self.number_of_neighbor_block_))
         print("%35s%3d <- (%d*%d^3+%d)"%("LSTM output dim: ", self.lstm_out_dim_, self.number_of_matters_, self.matter_dim_, self.number_of_nonmatter_features_))
