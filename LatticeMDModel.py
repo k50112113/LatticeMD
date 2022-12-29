@@ -61,7 +61,7 @@ class MDSequenceData:
             print("Reading %s/%s..."%(input_dir, log_filename))
             with open("%s/%s"%(input_dir, log_filename), 'r') as fin:
                 for aline in fin:
-                    if "Step f_avg_sys_pe[1]" in aline: break
+                    if "Step f_" in aline: break
                 fin.readline()
                 for aline in fin:
                     if "Loop" in aline: break
