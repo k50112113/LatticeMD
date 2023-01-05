@@ -10,7 +10,7 @@ class TimestepException(Exception): pass
 class NumberOfElementsException(Exception): pass
 
 class MDSequenceData:
-    def __init__(self, input_dir, system_dim, sequence_length, sequence_start_indices = [0], output_dir='./', select_matter = (), log_filename = 'log.lammps', moving_average_length = 1):
+    def __init__(self, input_dir, system_dim, sequence_length, max_frame = -1, sequence_start_indices = [0], output_dir='./', select_matter = (), log_filename = 'log.lammps', moving_average_length = 1):
         self.output_dir_ = output_dir
         self.system_dim_ = system_dim
         self.system_dim3_ = system_dim[0]*system_dim[1]*system_dim[2]
@@ -21,7 +21,7 @@ class MDSequenceData:
         try:
             # read pe: potential energy of each chunk. [unit: kcal/mole]
             print("Reading %s/pe.txt..."%(input_dir))
-            keys, step, data = self.read_lammps_ave("%s/pe.txt"%(input_dir))
+            keys, step, data = self.read_lammps_ave("%s/pe.txt"%(input_dir), max_frame = max_frame)
             self.data_step_ = step
             if len(keys) != 1: raise NumberOfElementsException
             if self.system_dim3_ != data.shape[1]: raise DimensionalityException
@@ -29,7 +29,7 @@ class MDSequenceData:
             
             # read stress, virial stress tensor of each chunk. [unit: atm]
             print("Reading %s/stress.txt..."%(input_dir))
-            keys, step, data = self.read_lammps_ave("%s/stress.txt"%(input_dir))
+            keys, step, data = self.read_lammps_ave("%s/stress.txt"%(input_dir), max_frame = max_frame)
             if len(self.data_step_) != len(step) or ((self.data_step_-step)**2).sum() > 0.0: raise TimestepException
             if len(keys) != 6:  raise NumberOfElementsException
             if self.system_dim3_ != data.shape[1]: raise DimensionalityException
@@ -37,7 +37,7 @@ class MDSequenceData:
 
             # read matter, amount of the matter of each chunk. [unit: #]
             print("Reading %s/matter.txt..."%(input_dir))
-            keys, step, data = self.read_lammps_ave("%s/matter.txt"%(input_dir))
+            keys, step, data = self.read_lammps_ave("%s/matter.txt"%(input_dir), max_frame = max_frame)
             if len(self.data_step_) != len(step) or ((self.data_step_-step)**2).sum() > 0.0: raise TimestepException
             if len(select_matter) == 0:
                 self.number_of_matters_ = len(keys)
@@ -53,26 +53,6 @@ class MDSequenceData:
             print("Reading %s/matter_sum_list.txt..."%(input_dir))
             with open("%s/matter_sum_list.txt"%(input_dir), 'r') as fin:
                 matter_sum_data = torch.tensor([float(i) for i in fin.readline().strip().split()])
-            
-            # read stress pe sum
-            pe_sum_data = []
-            stress_sum_data = []
-            step = []
-            print("Reading %s/%s..."%(input_dir, log_filename))
-            with open("%s/%s"%(input_dir, log_filename), 'r') as fin:
-                for aline in fin:
-                    if "Step f_" in aline: break
-                fin.readline()
-                for aline in fin:
-                    if "Loop" in aline: break
-                    linelist = aline.strip().split()
-                    step.append(int(linelist[0]))
-                    pe_sum_data.append(float(linelist[1]))
-                    stress_sum_data.append([float(i) for i in linelist[2:]])
-            step = torch.tensor(step)
-            pe_sum_data = torch.tensor(pe_sum_data).unsqueeze(-1)
-            stress_sum_data = torch.tensor(stress_sum_data)
-            if len(self.data_step_) != len(step) or ((self.data_step_-step)**2).sum() > 0.0: raise TimestepException
 
         except DimensionalityException:
             print("Error: Dimensionality ")
@@ -84,41 +64,46 @@ class MDSequenceData:
             print("Error: Time steps should be the same.")
             exit()
 
-        matter_data = matter_data.to(device)
-        stress_data = stress_data.to(device)
-        pe_data = pe_data.to(device)
+        matter_data     = matter_data.to(device)
+        stress_data     = stress_data.to(device)
+        pe_data         = pe_data.to(device)
         matter_sum_data = matter_sum_data.to(device)
-        stress_sum_data = stress_sum_data.to(device)
-        pe_sum_data = pe_sum_data.to(device)
+        stress_sum_data = stress_data.sum(dim = 1)
+        pe_sum_data     = pe_data.sum(dim = 1)
 
-        
         matter_data_normalization_factor = matter_sum_data/matter_data.sum(dim = 1)
         matter_data *= matter_data_normalization_factor.unsqueeze(1)
 
-        #convert S*V/V to S*V/v
+        #convert S*V/V to S*V/v (deprecated)
         #stress_data *= self.system_dim3_
         #stress_sum_data *= self.system_dim3_
 
         #compute prefactor
-        self.matter_prefactor_ = 1.0/(matter_data.std(dim = (0, 1)))
-        self.stress_prefactor_ = 1.0/(stress_data.std(dim = (0, 1), unbiased = False)) 
-        self.pe_prefactor_ = 1.0/(pe_data.std(dim = (0, 1), unbiased = False))
+        self.matter_prefactor_     = 1.0/self.compute_moving_average_std(matter_data, moving_average_length, dim = (0, 1))
+        self.stress_prefactor_     = 1.0/self.compute_moving_average_std(stress_data, moving_average_length, dim = (0, 1))
+        self.pe_prefactor_         = 1.0/self.compute_moving_average_std(pe_data, moving_average_length, dim = (0, 1))
         self.matter_sum_prefactor_ = 1.0/matter_sum_data
-        self.stress_sum_prefactor_ = 1.0/(stress_sum_data.std(dim = 0, unbiased = False))
-        self.pe_sum_prefactor_ = 1.0/(pe_sum_data.std(dim = 0, unbiased = False))
+        self.stress_sum_prefactor_ = 1.0/self.compute_moving_average_std(stress_sum_data, moving_average_length, dim = 0)
+        self.pe_sum_prefactor_     = 1.0/self.compute_moving_average_std(pe_sum_data, moving_average_length, dim = 0)
 
         #split data into sequences
-        self.matter_sequence_data_ = self.split_data_sequence(matter_data,     self.sequence_length_+1, sequence_start_indices, moving_average_length)
+        self.matter_sequence_data_ = self.split_data_sequence(matter_data,     self.sequence_length_+1, sequence_start_indices, moving_average_length, verbose = True)
         self.number_of_batches_    = len(self.matter_sequence_data_)
         ss = self.sequence_length_ + 1
-        if ss == 0: ss = 1
         self.matter_sequence_data_ = self.matter_sequence_data_.view(self.number_of_batches_, ss, self.system_dim_[0], self.matter_dim_, self.system_dim_[1], self.matter_dim_, self.system_dim_[2], self.matter_dim_, self.number_of_matters_).permute(0, 1, 2, 4, 6, 8, 3, 5, 7)
         self.matter_sequence_data_ = self.matter_sequence_data_.flatten(start_dim = 2, end_dim = 4)
-        self.stress_sequence_data_     = self.split_data_sequence(stress_data,     self.sequence_length_+1, sequence_start_indices, moving_average_length)
-        self.pe_sequence_data_         = self.split_data_sequence(pe_data,         self.sequence_length_+1, sequence_start_indices, moving_average_length)
-        self.stress_sum_data_          = self.split_data_sequence(stress_sum_data, self.sequence_length_+1, sequence_start_indices, moving_average_length)
-        self.pe_sum_data_              = self.split_data_sequence(pe_sum_data,     self.sequence_length_+1, sequence_start_indices, moving_average_length)
-        self.matter_sum_data_          = torch.tile(matter_sum_data, (self.number_of_batches_, 1))
+        self.stress_sequence_data_ = self.split_data_sequence(stress_data,     self.sequence_length_+1, sequence_start_indices, moving_average_length)
+        self.pe_sequence_data_     = self.split_data_sequence(pe_data,         self.sequence_length_+1, sequence_start_indices, moving_average_length)
+        self.stress_sum_data_      = self.split_data_sequence(stress_sum_data, self.sequence_length_+1, sequence_start_indices, moving_average_length)
+        self.pe_sum_data_          = self.split_data_sequence(pe_sum_data,     self.sequence_length_+1, sequence_start_indices, moving_average_length)
+        self.matter_sum_data_      = torch.tile(matter_sum_data, (self.number_of_batches_, 1))
+
+        self.matter_prefactor_     = self.matter_prefactor_.cpu()
+        self.stress_prefactor_     = self.stress_prefactor_.cpu()
+        self.pe_prefactor_         = self.pe_prefactor_.cpu()
+        self.matter_sum_prefactor_ = self.matter_sum_prefactor_.cpu()
+        self.stress_sum_prefactor_ = self.stress_sum_prefactor_.cpu()
+        self.pe_sum_prefactor_     = self.pe_sum_prefactor_.cpu()
         
         self.matter_sequence_data_ = self.matter_sequence_data_.cpu()
         self.stress_sequence_data_ = self.stress_sequence_data_.cpu()
@@ -130,6 +115,7 @@ class MDSequenceData:
         self.print_info()
 
     def print_info(self):
+        print("")
         print("%30s%d"%("Number of batches: ",len(self.matter_sequence_data_)))
         print("%30s%d"%("Sequence length: ",self.sequence_length_))
         print("%30s%d %d %d"%("System dim: ", self.system_dim_[0], self.system_dim_[1], self.system_dim_[2]))
@@ -144,23 +130,39 @@ class MDSequenceData:
         return self.matter_prefactor_,     self.stress_prefactor_,     self.pe_prefactor_,\
                self.matter_sum_prefactor_, self.stress_sum_prefactor_, self.pe_sum_prefactor_
 
+    def compute_moving_average_std(self, x, moving_average_length, dim = 0):
+        if moving_average_length == 1: return x.std(dim = dim, unbiased = False)
+        x_ma_tmp = self.moving_average(x, moving_average_length)[moving_average_length-1::moving_average_length]
+        x_tmp = x[moving_average_length:][moving_average_length-1::moving_average_length]
+        x_ma_std = (x_ma_tmp - x_tmp).std(dim = dim, unbiased = False)
+        return x_ma_std
+
     def moving_average(self, x, moving_average_length, dim = 0):
         if moving_average_length == 1: return x
         return (x.cumsum(dim = dim)[moving_average_length:] - x.cumsum(dim = dim)[:-moving_average_length])/moving_average_length
-
-    def split_data_sequence(self, data, sequence_length, sequence_start_indices, moving_average_length):
-        if sequence_length == 0: return data
+    
+    def split_data_sequence(self, data, sequence_length, sequence_start_indices, moving_average_length, verbose = False):
         split_data = None
         for sequence_start_index in sequence_start_indices:
             data_ma = self.moving_average(data[sequence_start_index:], moving_average_length)[moving_average_length-1::moving_average_length]
-            data_tmp = data_ma.split(sequence_length)
-            if len(data_tmp[-1]) != sequence_length: data_tmp = data_tmp[:-1]
-            data_tmp = torch.stack(data_tmp)
+            if sequence_length > 1:
+                data_tmp = data_ma.split(sequence_length)
+                if len(data_tmp[-1]) != sequence_length: data_tmp = data_tmp[:-1]
+                data_tmp = torch.stack(data_tmp)
+            elif sequence_length == 1:
+                data_tmp = data_ma.unsqueeze(1)
+
             if split_data is not None: split_data = torch.cat((split_data, data_tmp))
             else: split_data = data_tmp
+
+            if verbose:
+                print("splitting data:")
+                print("\tmoving average length = %d"%(moving_average_length))
+                print("\tdata range = %d ~ %d"%(sequence_start_index, len(data)))
+                print("\tbatch subtotal = %d"%(len(split_data)))
         return split_data
 
-    def read_lammps_ave(self, filename):
+    def read_lammps_ave(self, filename, max_frame = -1):
         #keys: [total_number_of_matters]
         #step: (total_sequence_length)
         #data: (total_sequence_length, system_dim3*matter_dim3, total_number_of_matters) for matter
@@ -180,6 +182,7 @@ class MDSequenceData:
                 step.append(float(linelist[0]))
                 for i in range(nline):
                     data[-1].append([float(i) for i in fin.readline().strip().split()[1:]])
+                if max_frame > -1 and len(data) >= max_frame: break 
         data = torch.tensor(data)
         step = torch.tensor(step)
         return keys, step, data
