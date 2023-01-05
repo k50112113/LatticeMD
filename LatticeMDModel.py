@@ -2,8 +2,8 @@ import torch
 import torch.nn as nn
 import os
 from Autoencoder import ConvAutoencoder, MLPAutoencoder, DummyAutoencoder
-#torch.set_default_tensor_type(torch.FloatTensor)
-torch.set_default_tensor_type(torch.DoubleTensor)
+torch.set_default_tensor_type(torch.FloatTensor)
+#torch.set_default_tensor_type(torch.DoubleTensor)
 
 class DimensionalityException(Exception): pass
 class TimestepException(Exception): pass

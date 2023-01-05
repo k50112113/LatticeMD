@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
 import os
-#torch.set_default_tensor_type(torch.FloatTensor)
-torch.set_default_tensor_type(torch.DoubleTensor)
+torch.set_default_tensor_type(torch.FloatTensor)
+#torch.set_default_tensor_type(torch.DoubleTensor)
 
 class ConvAutoencoder(nn.Module):
     def __init__(self, number_of_matters, conv_layer_kernal_size = (), conv_layer_stride = ()):
