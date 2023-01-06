@@ -16,7 +16,7 @@ class TrainLatticeMD:
         self.read_input_file()
 
         ###################################### Load basic information ######################################
-        print("%s - double precision."%(self.settings_["mode"]))
+        print("%s - single precision."%(self.settings_["mode"]))
         self.output_dir = self.settings_["output_dir"]
         self.output_log = self.settings_["output_log"]
         if os.path.isdir(self.output_dir) == False: os.mkdir(self.output_dir)
@@ -53,16 +53,10 @@ class TrainLatticeMD:
         
     def create_model(self):
         self.lattice_md_ = LatticeMD(number_of_matters = self.number_of_matters_, matter_dim = self.matter_dim_, \
-                                     matter_conv_layer_kernal_size = (), matter_conv_layer_stride = (), \
+                                     matter_conv_layer_kernal_size = (2, 2), matter_conv_layer_stride = (1, 1), \
                                      matter_linear_layer_size = (16, 16), matter_linear_encoded_size = 16, 
-                                     nonmatter_decoder_layer_size = (16, 16, 16))
+                                     nonmatter_decoder_layer_size = (16, 16))
         self.lattice_md_.to(self.device_)
-        # batch_size = 10
-        # matter_sequence           = self.batched_data_sequence_to_model_input(self.matter_sequence_data_[:batch_size])
-        # nonmatter_sequence = self.batched_data_sequence_to_model_input(self.nonmatter_sequence_data_[:batch_size])
-        # print(matter_sequence.shape, nonmatter_sequence.shape)
-        # predicted_matter, predicted_nonmatter = lmd(matter_sequence, nonmatter_sequence, system_dim, matter_normalization = False)
-        # print(predicted_matter.shape, predicted_nonmatter.shape)
 
     def batched_data_sequence_to_model_input(self, x):
         #input:
@@ -91,7 +85,11 @@ class TrainLatticeMD:
     def run_epoch(self, ith_epoch, test_fg = False):
         if test_fg: loader = self.test_loader_
         else: loader = self.train_loader_
-        loss_avg = torch.tensor(0.)
+        loss_avg               = torch.tensor(0.)
+        matter_loss_avg        = torch.tensor(0.)
+        nonmatter_loss_avg     = torch.tensor(0.)
+        matter_sum_loss_avg    = torch.tensor(0.)
+        nonmatter_sum_loss_avg = torch.tensor(0.)
 
         total_n_frames = 0
         # self.optimization.zero_grad()
@@ -100,7 +98,7 @@ class TrainLatticeMD:
             number_of_samples = self.dataset_number_of_samples_[training_index]
             system_dim = self.dataset_system_dim_[training_index]
             system_dim3 = system_dim[0]*system_dim[1]*system_dim[2]
-            total_n_frames += 0
+            total_n_frames = 0
             for matter_sequence_data, nonmatter_sequence_data, matter_sum_data, nonmatter_sum_data in loader[training_index]:
                 
                 if not test_fg: self.optimization.zero_grad()
@@ -114,8 +112,8 @@ class TrainLatticeMD:
                 nonmatter_sequence = self.batched_data_sequence_to_model_input(nonmatter_sequence_data)
                 
                 #test with batch_size = 1
-                # print(nonmatter_sequence[-1].sum(dim = 0)[-1]-nonmatter_sum_data[0, -1, -1])
-                # print(nonmatter_sequence[-1].sum(dim = 0)[:-1]-nonmatter_sum_data[0, -1, :-1])
+                # print(nonmatter_sequence[-1].sum(dim = 0)[-1]/nonmatter_sum_data[0, -1, -1])
+                # print(nonmatter_sequence[-1].sum(dim = 0)[:-1]/nonmatter_sum_data[0, -1, :-1])
                 # exit()
 
                 #split sequence into input (t = 0~sequence_length-1) and output (t = last element)
@@ -123,19 +121,19 @@ class TrainLatticeMD:
                 nonmatter_sequence_in = nonmatter_sequence[:-1]
 
                 #predict
-                predicted_matter_tmp, predicted_nonmatter_tmp = self.lattice_md_(matter_sequence_in, nonmatter_sequence_in, system_dim, matter_normalization = False)
+                predicted_matter_tmp, predicted_nonmatter_tmp = self.lattice_md_(matter_sequence_in, nonmatter_sequence_in, system_dim, matter_normalization = False, total_matter = 1.0/self.dataset_matter_sum_prefactor_[training_index])
                 
                 #compute loss
                 predicted_matter     = predicted_matter_tmp*self.dataset_matter_prefactor_[training_index]
                 predicted_nonmatter  = predicted_nonmatter_tmp*self.dataset_nonmatter_prefactor_[training_index]
                 labeled_matter       = matter_sequence[-1]*self.dataset_matter_prefactor_[training_index]
                 labeled_nonmatter    = nonmatter_sequence[-1]*self.dataset_nonmatter_prefactor_[training_index]
-                matter_loss          = self.compute_loss(predicted_matter.permute(0, 2, 3, 4, 1), labeled_matter)
+                matter_loss          = self.compute_loss(predicted_matter, labeled_matter)
                 nonmatter_loss       = self.compute_loss(predicted_nonmatter, labeled_nonmatter)
 
                 #compute sum_loss
-                predicted_matter_sum    = predicted_matter.view(batch_size, system_dim3, self.number_of_matters_, self.matter_dim_, self.matter_dim_, self.matter_dim_).sum(dim = (1, 3, 4, 5))*self.dataset_matter_sum_prefactor_[training_index]
-                predicted_nonmatter_sum = predicted_nonmatter.view(batch_size, system_dim3, 7).sum(dim = 1)*self.dataset_nonmatter_sum_prefactor_[training_index]
+                predicted_matter_sum    = predicted_matter_tmp.view(batch_size, system_dim3, self.number_of_matters_, self.matter_dim_, self.matter_dim_, self.matter_dim_).sum(dim = (1, 3, 4, 5))*self.dataset_matter_sum_prefactor_[training_index]
+                predicted_nonmatter_sum = predicted_nonmatter_tmp.view(batch_size, system_dim3, 7).sum(dim = 1)*self.dataset_nonmatter_sum_prefactor_[training_index]
                 labeled_matter_sum = matter_sum_data*self.dataset_matter_sum_prefactor_[training_index]
                 labeled_nonmatter_sum = nonmatter_sum_data[:, -1, :]*self.dataset_nonmatter_sum_prefactor_[training_index]
                 # print(labeled_nonmatter.sum(dim = 0) - nonmatter_sum_data[:, -1, :])
@@ -148,11 +146,15 @@ class TrainLatticeMD:
                     loss.backward()
                     self.optimization.step()
 
-                loss_avg += loss.detach().cpu()*batch_size
+                loss_avg               += loss.detach().cpu()*batch_size
+                matter_loss_avg        += matter_loss.detach().cpu()*batch_size
+                nonmatter_loss_avg     += nonmatter_loss.detach().cpu()*batch_size
+                matter_sum_loss_avg    += matter_sum_loss.detach().cpu()*batch_size
+                nonmatter_sum_loss_avg += nonmatter_sum_loss.detach().cpu()*batch_size
         
-        print("\t\t\t\t\t\t\t\t\t%.4e %.4e %.4e %.4e"%(matter_sum_loss.item(), nonmatter_loss.item(), matter_sum_loss.item(), nonmatter_sum_loss.item()))
+        #print("\t\t\t\t\t\t\t\t\t%.4e %.4e %.4e %.4e"%(matter_loss.item(), nonmatter_loss.item(), matter_sum_loss.item(), nonmatter_sum_loss.item()))
         
-        return loss_avg/total_n_frames
+        return loss_avg/total_n_frames, matter_loss_avg/total_n_frames, nonmatter_loss_avg/total_n_frames, matter_sum_loss_avg/total_n_frames, nonmatter_sum_loss_avg/total_n_frames
 
     def train(self):
         sys.stdout = self.logfile
@@ -160,18 +162,21 @@ class TrainLatticeMD:
 
         timer = Clock()
         print("")
-        print("%5s%12s%12s%12s%12s\n"%("epoch", "l2", "l2_t", "lr", "time"),end="")
+        print("%5s%24s%24s%24s%24s | %10s%5s\n"%("epoch", "mat2", "non-mat2", "mat_sum2", "non-mat_sum2", "lr", "time"),end="")
         
         timer.get_dt()
         for ith_epoch in range(self.number_of_epochs_):
-            loss_train = self.run_epoch(ith_epoch)
+            loss_train, matter_loss_train, nonmatter_loss_train, matter_sum_loss_train, nonmatter_sum_loss_train = self.run_epoch(ith_epoch)
             with torch.no_grad():
-                loss_test = self.run_epoch(ith_epoch, test_fg = True)
+                loss_test, matter_loss_test, nonmatter_loss_test, matter_sum_loss_test, nonmatter_sum_loss_test = self.run_epoch(ith_epoch, test_fg = True)
 
-            print("%5d%12.3e%12.3e%12.3e"%(ith_epoch+1, \
-                                           loss_train.item(), loss_test.item(), \
+            print("%5d%12.3e%12.3e%12.3e%12.3e%12.3e%12.3e%12.3e%12.3e | %10.3e"%(ith_epoch+1, \
+                                           matter_loss_train.item()       , matter_loss_test.item(), \
+                                           nonmatter_loss_train.item()    , nonmatter_loss_test.item(), \
+                                           matter_sum_loss_train.item()   , matter_sum_loss_test.item(), \
+                                           nonmatter_sum_loss_train.item(), nonmatter_sum_loss_test.item(), \
                                            self.optimization.param_groups[0]["lr"].item()), end="")
-            print("%12.3f"%(timer.get_dt()))
+            print("%5.2f"%(timer.get_dt()))
             self.learning_rate_schedule.step()
 
     def init_test(self):
@@ -252,12 +257,12 @@ class TrainLatticeMD:
                 self.train_loader_.append(torch.utils.data.DataLoader(dataset=train_dataset, batch_size=self.batch_size_,shuffle=True))
                 self.test_loader_.append(torch.utils.data.DataLoader(dataset=test_dataset, batch_size=self.batch_size_,shuffle=False))
 
-                # print("\t\tMatter prefactor        = %s"%(matter_prefactor.numpy()))
-                # print("\t\tStress prefactor        = %s"%(stress_prefactor.numpy()))
-                # print("\t\tPe     prefactor        = %s"%(pe_prefactor.numpy()))
-                # print("\t\tMatter sum prefactor    = %s"%(matter_sum_prefactor.numpy()))
-                # print("\t\tStress sum prefactor    = %s"%(stress_sum_prefactor.numpy()))
-                # print("\t\tPe     sum prefactor    = %s"%(pe_sum_prefactor.numpy()))
+                print("\t\tMatter prefactor        = %s"%(matter_prefactor.numpy()))
+                print("\t\tStress prefactor        = %s"%(stress_prefactor.numpy()))
+                print("\t\tPe     prefactor        = %s"%(pe_prefactor.numpy()))
+                print("\t\tMatter sum prefactor    = %s"%(matter_sum_prefactor.numpy()))
+                print("\t\tStress sum prefactor    = %s"%(stress_sum_prefactor.numpy()))
+                print("\t\tPe     sum prefactor    = %s"%(pe_sum_prefactor.numpy()))
 
         except NumberOfMattersException:
             print("Number of matters should be the same for all training data.")
