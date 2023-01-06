@@ -235,7 +235,7 @@ class LatticeMD(nn.Module):
                  matter_conv_ae_kernal_size = (), matter_conv_ae_stride = (), \
                     matter_linear_ae_hidden_size = (16, 16),    matter_linear_ae_encoded_size = 16, \
                  nonmatter_linear_ae_hidden_size = (16, 16), nonmatter_linear_ae_encoded_size = 16, \
-                 number_of_nonmatter_features = 7):
+                 number_of_nonmatter_features = 7, number_of_lstm_layer = 1):
         super(LatticeMD, self).__init__()
         if len(matter_conv_ae_kernal_size) != len(matter_conv_ae_stride):
             print("Error: matter_conv_ae_kernal_size and matter_conv_ae_stride should have the same sizes.")
@@ -245,7 +245,8 @@ class LatticeMD(nn.Module):
         self.matter_dim3_ = matter_dim**3
         self.number_of_neighbor_block_ = 6 + 1
         self.number_of_nonmatter_features_ = number_of_nonmatter_features # default: stress tensor and pe
-        
+        self.number_of_lstm_layer_ = number_of_lstm_layer
+
         if len(matter_conv_ae_kernal_size) > 0:
             self.matter_ae_type_ = 0
             self.matter_encoded_dim_ = matter_dim
@@ -266,7 +267,7 @@ class LatticeMD(nn.Module):
 
         self.lstm_out_dim_ = self.matter_encoded_flatten_dim_ + self.nonmatter_encoded_dim_
         self.lstm_in_dim_ = self.number_of_neighbor_block_ * self.lstm_out_dim_
-        self.lstm_ = nn.LSTM(self.lstm_in_dim_, self.lstm_out_dim_)
+        self.lstm_ = nn.LSTM(self.lstm_in_dim_, self.lstm_out_dim_, self.number_of_lstm_layer_)
 
         self.param  = list()
         self.param += list(self.matter_ae_.parameters())
@@ -304,21 +305,22 @@ class LatticeMD(nn.Module):
         print("%35s%d"%("Non-matter encoded dim: ", self.nonmatter_encoded_dim_))
         self.nonmatter_ae_.print_info()
         print("")
+        print("%35s%3d"%("Number of LSTM layer: ", self.number_of_lstm_layer_))
         print("%35s%3d <- (%d*%d^3+%d)*%d"%("LSTM input dim: ", self.lstm_in_dim_, self.number_of_matters_, self.matter_encoded_dim_, self.nonmatter_encoded_dim_, self.number_of_neighbor_block_))
         print("%35s%3d <- (%d*%d^3+%d)"%("LSTM output dim: ", self.lstm_out_dim_, self.number_of_matters_, self.matter_encoded_dim_, self.nonmatter_encoded_dim_))
-        
+
     def forward(self, matter_sequence, nonmatter_sequence, system_dim, matter_normalization = False, total_matter = 1.0):
         #input
         #   matter_sequence:        (sequence_length, batch_size * system_dim3, number_of_matters, matter_dim, matter_dim, matter_dim)
         #   nonmatter_sequence:     (sequence_length, batch_size * system_dim3, number_of_nonmatter_features)
         #   system_dim:             (batch_size, 3)
         #output
-        #   predicted_matter:  (batch_size * system_dim3, number_of_matters, matter_dim, matter_dim, matter_dim)
+        #   predicted_matter:       (batch_size * system_dim3, number_of_matters, matter_dim, matter_dim, matter_dim)
         #   predicted_nonmatter:    (batch_size * system_dim3, number_of_nonmatter_features)
         encoded_in = self.encode(matter_sequence, nonmatter_sequence)
         lstm_in = self.get_neighbor_block_data(encoded_in, system_dim)
-        lstm_out, hidden = self.advance(lstm_in)
-        lstm_out = lstm_out[-1] #(batch_size * system_dim3, lstm_out_dim)
+        out, (hn, cn) = self.advance(lstm_in)
+        lstm_out = hn.sum(dim = 0) #(batch_size * system_dim3, lstm_out_dim)
         predicted_matter, predicted_nonmatter = self.decode(lstm_out)
         if matter_normalization: predicted_matter = self.matter_normalize(predicted_matter, system_dim, total_matter)
         return predicted_matter, predicted_nonmatter

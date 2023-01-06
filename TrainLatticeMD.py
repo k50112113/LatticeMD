@@ -64,10 +64,12 @@ class TrainLatticeMD:
             matter_linear_ae_encoded_size    = 1  if self.settings_.get("matter_linear_ae_encoded_size") is None else int(self.settings_.get("matter_linear_ae_encoded_size"))
             nonmatter_linear_ae_hidden_size  = () if self.settings_.get("nonmatter_linear_ae_hidden_size") is None else tuple([int(i) for i in self.settings_.get("nonmatter_linear_ae_hidden_size").strip().split()])
             nonmatter_linear_ae_encoded_size = 1  if self.settings_.get("nonmatter_linear_ae_encoded_size") is None else int(self.settings_.get("nonmatter_linear_ae_encoded_size"))
+            number_of_lstm_layer = 1 if self.settings_.get("number_of_lstm_layer") is None else int(self.settings_.get("number_of_lstm_layer"))
             self.lattice_md_ = LatticeMD(number_of_matters = self.number_of_matters_, matter_dim = self.matter_dim_, \
                                          matter_conv_ae_kernal_size = matter_conv_ae_kernal_size, matter_conv_ae_stride = matter_conv_ae_stride, \
                                          matter_linear_ae_hidden_size = matter_linear_ae_hidden_size, matter_linear_ae_encoded_size = matter_linear_ae_encoded_size, \
-                                         nonmatter_linear_ae_hidden_size = nonmatter_linear_ae_hidden_size, nonmatter_linear_ae_encoded_size = nonmatter_linear_ae_encoded_size)
+                                         nonmatter_linear_ae_hidden_size = nonmatter_linear_ae_hidden_size, nonmatter_linear_ae_encoded_size = nonmatter_linear_ae_encoded_size, \
+                                         number_of_lstm_layer = number_of_lstm_layer)
             self.lattice_md_.to(self.device_)
 
     def batched_data_sequence_to_model_input(self, x):
