@@ -32,8 +32,8 @@ class TrainLatticeMD:
         
         ###################################### Load basic information ######################################
 
-        if self.settings_["mode"] == "train": self.init_training()
-        elif self.settings_["mode"] == "test": self.init_test()
+        if self.settings_["mode"]   == "train": self.init_training()
+        elif self.settings_["mode"] == "test":  self.init_test()
 
         ###################################### Load MD sequence data ######################################
         print("Loading MD sequence data...")
@@ -163,7 +163,8 @@ class TrainLatticeMD:
         timer = Clock()
         print("")
         print("%5s%24s%24s%24s%24s | %10s%5s\n"%("epoch", "mat2", "non-mat2", "mat_sum2", "non-mat_sum2", "lr", "time"),end="")
-        
+
+        self.lattice_md_.unfreeze_model()
         timer.get_dt()
         for ith_epoch in range(self.number_of_epochs_):
             loss_train, matter_loss_train, nonmatter_loss_train, matter_sum_loss_train, nonmatter_sum_loss_train = self.run_epoch(ith_epoch)
@@ -179,15 +180,19 @@ class TrainLatticeMD:
             print("%5.2f"%(timer.get_dt()))
             self.learning_rate_schedule.step()
 
+        print("")
+        self.save_model()
+        sys.stdout = self.original_stdout
+
     def init_test(self):
-        self.number_of_epochs_            = None
-        self.learning_rate_start_          = None
-        self.learning_rate_end_            = None
+        self.number_of_epochs_    = None
+        self.learning_rate_start_ = None
+        self.learning_rate_end_   = None
         print("Starting a NNFF testing on device %s"%(self.device_))
         print("")
         
     def init_training(self):
-        self.number_of_epochs_   = int(self.settings_["number_of_epochs"])
+        self.number_of_epochs_    = int(self.settings_["number_of_epochs"])
         self.learning_rate_start_ = torch.tensor(float(self.settings_["learning_rate_start"]))
         if self.settings_.get("learning_rate_end"): self.learning_rate_end_ = torch.tensor(float(self.settings_["learning_rate_end"]))
         else:                                       self.learning_rate_end_ = torch.tensor(float(self.settings_["learning_rate_start"]))
@@ -282,3 +287,26 @@ class TrainLatticeMD:
                 if aline.strip() == "": continue
                 linelist = aline.strip().split("=")
                 if len(linelist) > 1: self.settings_[linelist[0].strip()] = linelist[1].strip()
+
+    def save_model(self):
+        model_filename = "save.lmd" if self.settings_.get('save_model_name') is None else self.settings_.get('save_model_name')
+        print("")
+        print("Saving model to %s..."%(model_filename))
+        self.lattice_md_.to('cpu')
+        self.lattice_md_.freeze_model()
+        fout = open(self.output_dir+"/"+model_filename,"wb")
+        dill.dump(self.lattice_md_, fout)
+        fout.close()
+        self.lattice_md_.to(self.device_)
+        self.lattice_md_.unfreeze_model()
+    
+    def load_model(self):
+        model_filename = "save.lmd" if self.settings_.get('load_model_name') is None else self.settings_.get('save_model_name')
+        print("")
+        print("Loading model from %s..."%(model_filename))
+        fin = open(model_filename,"rb")
+        self.lattice_md_ = dill.load(fin, fout)
+        fin.close()
+        self.lattice_md_.to(self.device_)
+    
+        

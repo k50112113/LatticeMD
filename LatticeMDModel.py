@@ -281,6 +281,14 @@ class LatticeMD(nn.Module):
         self.lstm_.to(device)
         self.nonmatter_decoder_.to(device)
 
+    def freeze_model(self):
+        for a in self.param:
+            a.requires_grad = False
+    
+    def unfreeze_model(self):
+        for a in self.param:
+            a.requires_grad = True
+
     def parameters(self):
         return self.param
     
