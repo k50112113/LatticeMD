@@ -52,11 +52,23 @@ class TrainLatticeMD:
         sys.stdout = self.original_stdout
         
     def create_model(self):
-        self.lattice_md_ = LatticeMD(number_of_matters = self.number_of_matters_, matter_dim = self.matter_dim_, \
-                                     matter_conv_layer_kernal_size = (2, 2), matter_conv_layer_stride = (1, 1), \
-                                     matter_linear_layer_size = (16, 16), matter_linear_encoded_size = 16, 
-                                     nonmatter_decoder_layer_size = (16, 16))
-        self.lattice_md_.to(self.device_)
+        if self.settings_.get("model_dir") is not None:
+            print("Path to existing model is specified, loading model...")
+            self.model_dir = self.settings_["model_dir"]
+            self.load_model()    
+        else:
+            print("Create new model")
+            matter_conv_ae_kernal_size       = () if self.settings_.get("matter_conv_ae_kernal_size")    is None else tuple([int(i) for i in self.settings_.get("matter_conv_ae_kernal_size").strip().split()])
+            matter_conv_ae_stride            = () if self.settings_.get("matter_conv_ae_stride")         is None else tuple([int(i) for i in self.settings_.get("matter_conv_ae_stride").strip().split()])
+            matter_linear_ae_hidden_size     = () if self.settings_.get("matter_linear_ae_hidden_size")  is None else tuple([int(i) for i in self.settings_.get("matter_linear_ae_hidden_size").strip().split()])
+            matter_linear_ae_encoded_size    = 1  if self.settings_.get("matter_linear_ae_encoded_size") is None else int(self.settings_.get("matter_linear_ae_encoded_size"))
+            nonmatter_linear_ae_hidden_size  = () if self.settings_.get("nonmatter_linear_ae_hidden_size") is None else tuple([int(i) for i in self.settings_.get("nonmatter_linear_ae_hidden_size").strip().split()])
+            nonmatter_linear_ae_encoded_size = 1  if self.settings_.get("nonmatter_linear_ae_encoded_size") is None else int(self.settings_.get("nonmatter_linear_ae_encoded_size"))
+            self.lattice_md_ = LatticeMD(number_of_matters = self.number_of_matters_, matter_dim = self.matter_dim_, \
+                                         matter_conv_ae_kernal_size = matter_conv_ae_kernal_size, matter_conv_ae_stride = matter_conv_ae_stride, \
+                                         matter_linear_ae_hidden_size = matter_linear_ae_hidden_size, matter_linear_ae_encoded_size = matter_linear_ae_encoded_size, \
+                                         nonmatter_linear_ae_hidden_size = nonmatter_linear_ae_hidden_size, nonmatter_linear_ae_encoded_size = nonmatter_linear_ae_encoded_size)
+            self.lattice_md_.to(self.device_)
 
     def batched_data_sequence_to_model_input(self, x):
         #input:
@@ -121,7 +133,7 @@ class TrainLatticeMD:
                 nonmatter_sequence_in = nonmatter_sequence[:-1]
 
                 #predict
-                predicted_matter_tmp, predicted_nonmatter_tmp = self.lattice_md_(matter_sequence_in, nonmatter_sequence_in, system_dim, matter_normalization = False, total_matter = 1.0/self.dataset_matter_sum_prefactor_[training_index])
+                predicted_matter_tmp, predicted_nonmatter_tmp = self.lattice_md_(matter_sequence_in, nonmatter_sequence_in, system_dim, matter_normalization = True, total_matter = 1.0/self.dataset_matter_sum_prefactor_[training_index])
                 
                 #compute loss
                 predicted_matter     = predicted_matter_tmp*self.dataset_matter_prefactor_[training_index]
@@ -289,7 +301,7 @@ class TrainLatticeMD:
                 if len(linelist) > 1: self.settings_[linelist[0].strip()] = linelist[1].strip()
 
     def save_model(self):
-        model_filename = "save.lmd" if self.settings_.get('save_model_name') is None else self.settings_.get('save_model_name')
+        model_filename = "save.lmd"
         print("")
         print("Saving model to %s..."%(model_filename))
         self.lattice_md_.to('cpu')
@@ -301,7 +313,7 @@ class TrainLatticeMD:
         self.lattice_md_.unfreeze_model()
     
     def load_model(self):
-        model_filename = "save.lmd" if self.settings_.get('load_model_name') is None else self.settings_.get('save_model_name')
+        model_filename = "save.lmd"
         print("")
         print("Loading model from %s..."%(model_filename))
         fin = open(model_filename,"rb")
