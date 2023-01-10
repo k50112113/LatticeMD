@@ -80,9 +80,9 @@ if rank == 0:
             vol = vol.mean(dim = 0)
 
             if isomax is None:
-                isomax = vol.max()
-            if isomin is None: 
-                isomin = vol.min()
+                isomax = vol.max().item()
+            if isomin is None:
+                isomin = vol.min().item()
                 isomin = isomin + (isomax - isomin)*0.3
 
         print("Distribute No. %d ~ %d-th snapshot (%d ~ %d-th frame) to %d-th processor"%(first_start_snapshot, last_start_snapshot+num_snapshot_avg, start_frame_index, end_frame_index, irank))

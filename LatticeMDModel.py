@@ -10,14 +10,31 @@ class TimestepException(Exception): pass
 class NumberOfElementsException(Exception): pass
 
 class MDSequenceData:
-    def __init__(self, input_dir, system_dim, sequence_length, max_frame = -1, sequence_start_indices = [0], output_dir='./', select_matter = (), log_filename = 'log.lammps', moving_average_length = 1):
-        self.output_dir_ = output_dir
+    def __init__(self, system_dim):
         self.system_dim_ = system_dim
         self.system_dim3_ = system_dim[0]*system_dim[1]*system_dim[2]
+        self.number_of_matters_    = None
+        self.matter_dim_           = None
+        self.sequence_length_      = None
+        self.matter_sequence_data_ = None #(N_batches, sequence_length, system_dim3, number_of_matters, matter_dim, matter_dim, matter_dim)
+        self.stress_sequence_data_ = None
+        self.pe_sequence_data_     = None
+        self.matter_sum_data_      = None
+        self.stress_sum_data_      = None
+        self.pe_sum_data_          = None
+
+        self.matter_prefactor_     = None
+        self.stress_prefactor_     = None
+        self.pe_prefactor_         = None
+        self.matter_sum_prefactor_ = None
+        self.stress_sum_prefactor_ = None
+        self.pe_sum_prefactor_     = None
+
+    def load_data(self, input_dir, sequence_length, max_frame = -1, sequence_start_indices = [0], output_dir='./', select_matter = (), log_filename = 'log.lammps', moving_average_length = 1):
+        self.output_dir_ = output_dir
         self.sequence_length_ = sequence_length
         if os.path.isdir(self.output_dir_) == False: os.system("mkdir -p %s"%(self.output_dir_))
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        
         try:
             # read pe: potential energy of each chunk. [unit: kcal/mole]
             print("Reading %s/pe.txt..."%(input_dir))
