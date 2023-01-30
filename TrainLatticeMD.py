@@ -29,7 +29,7 @@ class TrainLatticeMD:
 
         self.random_split_seed_              = 42  if self.settings_.get("random_split_seed") is None else int(self.settings_["random_split_seed"])
         self.batch_size_                     = 1   if self.settings_.get("batch_size")        is None else int(self.settings_["batch_size"])
-        self.test_ratio_                     = 0.1 if self.settings_.get("test_ratio")         is None else float(self.settings_["test_ratio"])
+        self.test_ratio_                     = 0.1 if self.settings_.get("test_ratio")        is None else float(self.settings_["test_ratio"])
         
         ###################################### Load basic information ######################################
 
@@ -38,6 +38,7 @@ class TrainLatticeMD:
 
         ###################################### Create Octahedral Group Symmetry operation ######################################
         print("Creating Octahedral Group Symmetry operation...")
+        self.number_of_random_symmetry_group_ = 0 if self.settings_.get("number_of_random_symmetry_group") is None else int(self.settings_["number_of_random_symmetry_group"])
         self.create_octahedral_group_operation()
         ###################################### Create Octahedral Group Symmetry operation ######################################
 
@@ -121,10 +122,10 @@ class TrainLatticeMD:
             for matter_sequence_data_untransformed, nonmatter_sequence_data_untransformed, matter_sum_data, nonmatter_sum_data_untransformed in loader[training_index]:
                 
                 batch_size = len(matter_sequence_data_untransformed)
-                self.number_of_octahedral_group_operations_ = 3
                 total_n_frames += batch_size*self.number_of_octahedral_group_operations_
-                
-                for group_index in range(self.number_of_octahedral_group_operations_):
+                random_group_index_list = torch.randint(0, self.number_of_octahedral_group_operations_, (self.number_of_random_symmetry_group_,)).numpy() if self.number_of_random_symmetry_group_ > 0 else [0]
+
+                for group_index in random_group_index_list:
 
                     matter_sequence_data, nonmatter_sequence_data, nonmatter_sum_data = self.octahedral_group_operation(matter_sequence_data_untransformed, nonmatter_sequence_data_untransformed, nonmatter_sum_data_untransformed, batch_size, system_dim, group_index)
                     
@@ -145,13 +146,15 @@ class TrainLatticeMD:
                     nonmatter_sequence_in = nonmatter_sequence[:-1]
 
                     #predict
-                    predicted_matter_tmp, predicted_nonmatter_tmp = self.lattice_md_(matter_sequence_in, nonmatter_sequence_in, system_dim, matter_normalization = True, total_matter = 1.0/self.dataset_matter_sum_prefactor_[training_index])
-                    
+                    predicted_matter_tmp, predicted_nonmatter_tmp = self.lattice_md_(matter_sequence_in, nonmatter_sequence_in, system_dim)
+                    predicted_matter_tmp    += matter_sequence_in[-1]
+                    predicted_nonmatter_tmp += nonmatter_sequence_in[-1]
+
                     #compute loss
                     predicted_matter     = predicted_matter_tmp*self.dataset_matter_prefactor_[training_index]
                     predicted_nonmatter  = predicted_nonmatter_tmp*self.dataset_nonmatter_prefactor_[training_index]
-                    labeled_matter       = (   matter_sequence[-1]-   matter_sequence[-2]) * self.dataset_matter_prefactor_[training_index]
-                    labeled_nonmatter    = (nonmatter_sequence[-1]-nonmatter_sequence[-2]) * self.dataset_nonmatter_prefactor_[training_index]
+                    labeled_matter       =    matter_sequence[-1] * self.dataset_matter_prefactor_[training_index]
+                    labeled_nonmatter    = nonmatter_sequence[-1] * self.dataset_nonmatter_prefactor_[training_index]
                     matter_loss          = self.compute_loss(predicted_matter, labeled_matter)
                     nonmatter_loss       = self.compute_loss(predicted_nonmatter, labeled_nonmatter)
 
@@ -160,8 +163,8 @@ class TrainLatticeMD:
                     predicted_nonmatter_sum = predicted_nonmatter_tmp.view(batch_size, system_dim3, 7).sum(dim = 1)*self.dataset_nonmatter_sum_prefactor_[training_index]
                     labeled_matter_sum      = matter_sum_data*self.dataset_matter_sum_prefactor_[training_index]
                     labeled_nonmatter_sum   = nonmatter_sum_data[:, -1, :]*self.dataset_nonmatter_sum_prefactor_[training_index]
-                    matter_sum_loss    = self.compute_loss(predicted_matter_sum, labeled_matter_sum)
-                    nonmatter_sum_loss = self.compute_loss(predicted_nonmatter_sum, labeled_nonmatter_sum)
+                    matter_sum_loss         = self.compute_loss(predicted_matter_sum, labeled_matter_sum)
+                    nonmatter_sum_loss      = self.compute_loss(predicted_nonmatter_sum, labeled_nonmatter_sum)
                     
                     # print("%.4e %.4e %.4e %.4e"%(matter_loss.item(), nonmatter_loss.item(), matter_sum_loss.item(), nonmatter_sum_loss.item()))
                     loss = matter_loss + nonmatter_loss + matter_sum_loss + nonmatter_sum_loss
@@ -174,7 +177,7 @@ class TrainLatticeMD:
                     nonmatter_loss_avg     += nonmatter_loss.detach().cpu()*batch_size
                     matter_sum_loss_avg    += matter_sum_loss.detach().cpu()*batch_size
                     nonmatter_sum_loss_avg += nonmatter_sum_loss.detach().cpu()*batch_size
-                exit()
+                    
         #print("\t\t\t\t\t\t\t\t\t%.4e %.4e %.4e %.4e"%(matter_loss.item(), nonmatter_loss.item(), matter_sum_loss.item(), nonmatter_sum_loss.item()))
         
         return loss_avg/total_n_frames, matter_loss_avg/total_n_frames, nonmatter_loss_avg/total_n_frames, matter_sum_loss_avg/total_n_frames, nonmatter_sum_loss_avg/total_n_frames

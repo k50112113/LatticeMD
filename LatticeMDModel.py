@@ -332,7 +332,7 @@ class LatticeMD(nn.Module):
         print("%35s%3d <- (%d*%d^3+%d)*%d"%("LSTM input dim: ", self.lstm_in_dim_, self.number_of_matters_, self.matter_encoded_dim_, self.nonmatter_encoded_dim_, self.number_of_neighbor_block_))
         print("%35s%3d <- (%d*%d^3+%d)"%("LSTM output dim: ", self.lstm_out_dim_, self.number_of_matters_, self.matter_encoded_dim_, self.nonmatter_encoded_dim_))
 
-    def forward(self, matter_sequence, nonmatter_sequence, system_dim, matter_normalization = False, total_matter = 1.0):
+    def forward(self, matter_sequence, nonmatter_sequence, system_dim):
         #input
         #   matter_sequence:        (sequence_length-1, batch_size * system_dim3, number_of_matters, matter_dim, matter_dim, matter_dim)
         #   nonmatter_sequence:     (sequence_length-1, batch_size * system_dim3, number_of_nonmatter_features)
@@ -345,8 +345,7 @@ class LatticeMD(nn.Module):
         out, (hn, cn) = self.advance(lstm_in)
         lstm_out = hn.sum(dim = 0) #(batch_size * system_dim3, lstm_out_dim)
         predicted_matter, predicted_nonmatter = self.decode(lstm_out)
-        
-        if matter_normalization: predicted_matter = self.matter_normalize(predicted_matter, system_dim, total_matter)
+        predicted_matter = self.matter_normalize(predicted_matter, system_dim)
         return predicted_matter, predicted_nonmatter
     
     def get_neighbor_block_data(self, encoded_in, system_dim):
@@ -400,11 +399,11 @@ class LatticeMD(nn.Module):
         
         return matter_decoded, nonmatter_decoded
     
-    def matter_normalize(self, matter, system_dim, total_matter):
+    def matter_normalize(self, matter, system_dim):
         #matter:                    (batch_size * system_dim3, number_of_matters, matter_dim, matter_dim, matter_dim)
         matter = matter.view(-1, system_dim[0]*system_dim[1]*system_dim[2], self.number_of_matters_, self.matter_dim_, self.matter_dim_, self.matter_dim_)
-        matter_sum = matter.sum(dim = (1, 3, 4, 5), keepdim = True) #(batch_size, 1, number_of_matters, 1, 1, 1)
-        matter = matter/matter_sum*total_matter
+        matter_mean = matter.mean(dim = (1, 3, 4, 5), keepdim = True) #(batch_size, 1, number_of_matters, 1, 1, 1)
+        matter -= matter_mean
         matter = matter.flatten(start_dim = 0, end_dim = 1)
         return matter
 
