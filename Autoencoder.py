@@ -36,7 +36,7 @@ class ConvAutoencoder(nn.Module):
 
     def print_info(self):
         print("%35s"%("Autoencoder dim: "), end = "")
-        for index in range(self.number_of_layer_+1):      print("%d %d %d -> "%(self.encoder_layer_size_[index],self.encoder_layer_size_[index],self.encoder_layer_size_[index]), end = "")
+        for index in range(self.number_of_layer_+1):  print("%d %d %d -> "%(self.encoder_layer_size_[index],self.encoder_layer_size_[index],self.encoder_layer_size_[index]), end = "")
         for index in range(1, self.number_of_layer_): print("%d %d %d -> "%(self.decoder_layer_size_[index],self.decoder_layer_size_[index],self.decoder_layer_size_[index]), end = "")
         print("%d %d %d"%(self.decoder_layer_size_[-1],self.decoder_layer_size_[-1],self.decoder_layer_size_[-1]))
 

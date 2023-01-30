@@ -3,6 +3,7 @@ import torch.nn as nn
 import os
 import sys
 from LatticeMDModel import LatticeMD, LatticeMDDataset
+from OctahedralGroup import OctahedralGroup
 import dill
 from Clock import Clock
 
@@ -34,6 +35,11 @@ class TrainLatticeMD:
 
         if self.settings_["mode"]   == "train": self.init_training()
         elif self.settings_["mode"] == "test":  self.init_test()
+
+        ###################################### Create Octahedral Group Symmetry operation ######################################
+        print("Creating Octahedral Group Symmetry operation...")
+        self.create_octahedral_group_operation()
+        ###################################### Create Octahedral Group Symmetry operation ######################################
 
         ###################################### Load MD sequence data ######################################
         print("Loading MD sequence data...")
@@ -106,66 +112,69 @@ class TrainLatticeMD:
         nonmatter_sum_loss_avg = torch.tensor(0.)
 
         total_n_frames = 0
-        # self.optimization.zero_grad()
 
         for training_index, training_data_dir in enumerate(self.training_data_dir_list_):
             number_of_samples = self.dataset_number_of_samples_[training_index]
             system_dim = self.dataset_system_dim_[training_index]
             system_dim3 = system_dim[0]*system_dim[1]*system_dim[2]
             total_n_frames = 0
-            for matter_sequence_data, nonmatter_sequence_data, matter_sum_data, nonmatter_sum_data in loader[training_index]:
+            for matter_sequence_data_untransformed, nonmatter_sequence_data_untransformed, matter_sum_data, nonmatter_sum_data_untransformed in loader[training_index]:
                 
-                if not test_fg: self.optimization.zero_grad()
+                batch_size = len(matter_sequence_data_untransformed)
+                self.number_of_octahedral_group_operations_ = 3
+                total_n_frames += batch_size*self.number_of_octahedral_group_operations_
                 
-                batch_size = len(matter_sequence_data)
-                total_n_frames += batch_size
+                for group_index in range(self.number_of_octahedral_group_operations_):
 
-                #reshape input from batch-first to sequence-first
-                #flatten batch and system_dim dimensions
-                matter_sequence    = self.batched_data_sequence_to_model_input(matter_sequence_data)
-                nonmatter_sequence = self.batched_data_sequence_to_model_input(nonmatter_sequence_data)
-                
-                #test with batch_size = 1
-                # print(nonmatter_sequence[-1].sum(dim = 0)[-1]/nonmatter_sum_data[0, -1, -1])
-                # print(nonmatter_sequence[-1].sum(dim = 0)[:-1]/nonmatter_sum_data[0, -1, :-1])
-                # exit()
+                    matter_sequence_data, nonmatter_sequence_data, nonmatter_sum_data = self.octahedral_group_operation(matter_sequence_data_untransformed, nonmatter_sequence_data_untransformed, nonmatter_sum_data_untransformed, batch_size, system_dim, group_index)
+                    
+                    if not test_fg: self.optimization.zero_grad()
+                    
+                    #reshape input from batch-first to sequence-first
+                    #flatten batch and system_dim dimensions
+                    matter_sequence    = self.batched_data_sequence_to_model_input(matter_sequence_data)
+                    nonmatter_sequence = self.batched_data_sequence_to_model_input(nonmatter_sequence_data)
+                    
+                    #test with batch_size = 1
+                    # print(nonmatter_sequence[-1].sum(dim = 0)[ -1]/nonmatter_sum_data[0, -1, -1])
+                    # print(nonmatter_sequence[-1].sum(dim = 0)[:-1]/nonmatter_sum_data[0, -1, :-1])
+                    # print(nonmatter_sum_data[0, -1, :-1])
 
-                #split sequence into input (t = 0~sequence_length-1) and output (t = last element)
-                matter_sequence_in = matter_sequence[:-1]
-                nonmatter_sequence_in = nonmatter_sequence[:-1]
+                    #split sequence into input (t = 0~sequence_length-1) and output (t = last element)
+                    matter_sequence_in = matter_sequence[:-1]
+                    nonmatter_sequence_in = nonmatter_sequence[:-1]
 
-                #predict
-                predicted_matter_tmp, predicted_nonmatter_tmp = self.lattice_md_(matter_sequence_in, nonmatter_sequence_in, system_dim, matter_normalization = True, total_matter = 1.0/self.dataset_matter_sum_prefactor_[training_index])
-                
-                #compute loss
-                predicted_matter     = predicted_matter_tmp*self.dataset_matter_prefactor_[training_index]
-                predicted_nonmatter  = predicted_nonmatter_tmp*self.dataset_nonmatter_prefactor_[training_index]
-                labeled_matter       = matter_sequence[-1]*self.dataset_matter_prefactor_[training_index]
-                labeled_nonmatter    = nonmatter_sequence[-1]*self.dataset_nonmatter_prefactor_[training_index]
-                matter_loss          = self.compute_loss(predicted_matter, labeled_matter)
-                nonmatter_loss       = self.compute_loss(predicted_nonmatter, labeled_nonmatter)
+                    #predict
+                    predicted_matter_tmp, predicted_nonmatter_tmp = self.lattice_md_(matter_sequence_in, nonmatter_sequence_in, system_dim, matter_normalization = True, total_matter = 1.0/self.dataset_matter_sum_prefactor_[training_index])
+                    
+                    #compute loss
+                    predicted_matter     = predicted_matter_tmp*self.dataset_matter_prefactor_[training_index]
+                    predicted_nonmatter  = predicted_nonmatter_tmp*self.dataset_nonmatter_prefactor_[training_index]
+                    labeled_matter       = (   matter_sequence[-1]-   matter_sequence[-2]) * self.dataset_matter_prefactor_[training_index]
+                    labeled_nonmatter    = (nonmatter_sequence[-1]-nonmatter_sequence[-2]) * self.dataset_nonmatter_prefactor_[training_index]
+                    matter_loss          = self.compute_loss(predicted_matter, labeled_matter)
+                    nonmatter_loss       = self.compute_loss(predicted_nonmatter, labeled_nonmatter)
 
-                #compute sum_loss
-                predicted_matter_sum    = predicted_matter_tmp.view(batch_size, system_dim3, self.number_of_matters_, self.matter_dim_, self.matter_dim_, self.matter_dim_).sum(dim = (1, 3, 4, 5))*self.dataset_matter_sum_prefactor_[training_index]
-                predicted_nonmatter_sum = predicted_nonmatter_tmp.view(batch_size, system_dim3, 7).sum(dim = 1)*self.dataset_nonmatter_sum_prefactor_[training_index]
-                labeled_matter_sum = matter_sum_data*self.dataset_matter_sum_prefactor_[training_index]
-                labeled_nonmatter_sum = nonmatter_sum_data[:, -1, :]*self.dataset_nonmatter_sum_prefactor_[training_index]
-                # print(labeled_nonmatter.sum(dim = 0) - nonmatter_sum_data[:, -1, :])
-                matter_sum_loss    = self.compute_loss(predicted_matter_sum, labeled_matter_sum)
-                nonmatter_sum_loss = self.compute_loss(predicted_nonmatter_sum, labeled_nonmatter_sum)
-                
-                # print("%.4e %.4e %.4e %.4e"%(matter_loss.item(), nonmatter_loss.item(), matter_sum_loss.item(), nonmatter_sum_loss.item()))
-                loss = matter_loss + nonmatter_loss + matter_sum_loss + nonmatter_sum_loss
-                if not test_fg:
-                    loss.backward()
-                    self.optimization.step()
+                    #compute sum_loss
+                    predicted_matter_sum    = predicted_matter_tmp.view(batch_size, system_dim3, self.number_of_matters_, self.matter_dim_, self.matter_dim_, self.matter_dim_).sum(dim = (1, 3, 4, 5))*self.dataset_matter_sum_prefactor_[training_index]
+                    predicted_nonmatter_sum = predicted_nonmatter_tmp.view(batch_size, system_dim3, 7).sum(dim = 1)*self.dataset_nonmatter_sum_prefactor_[training_index]
+                    labeled_matter_sum      = matter_sum_data*self.dataset_matter_sum_prefactor_[training_index]
+                    labeled_nonmatter_sum   = nonmatter_sum_data[:, -1, :]*self.dataset_nonmatter_sum_prefactor_[training_index]
+                    matter_sum_loss    = self.compute_loss(predicted_matter_sum, labeled_matter_sum)
+                    nonmatter_sum_loss = self.compute_loss(predicted_nonmatter_sum, labeled_nonmatter_sum)
+                    
+                    # print("%.4e %.4e %.4e %.4e"%(matter_loss.item(), nonmatter_loss.item(), matter_sum_loss.item(), nonmatter_sum_loss.item()))
+                    loss = matter_loss + nonmatter_loss + matter_sum_loss + nonmatter_sum_loss
+                    if not test_fg:
+                        loss.backward()
+                        self.optimization.step()
 
-                loss_avg               += loss.detach().cpu()*batch_size
-                matter_loss_avg        += matter_loss.detach().cpu()*batch_size
-                nonmatter_loss_avg     += nonmatter_loss.detach().cpu()*batch_size
-                matter_sum_loss_avg    += matter_sum_loss.detach().cpu()*batch_size
-                nonmatter_sum_loss_avg += nonmatter_sum_loss.detach().cpu()*batch_size
-        
+                    loss_avg               += loss.detach().cpu()*batch_size
+                    matter_loss_avg        += matter_loss.detach().cpu()*batch_size
+                    nonmatter_loss_avg     += nonmatter_loss.detach().cpu()*batch_size
+                    matter_sum_loss_avg    += matter_sum_loss.detach().cpu()*batch_size
+                    nonmatter_sum_loss_avg += nonmatter_sum_loss.detach().cpu()*batch_size
+                exit()
         #print("\t\t\t\t\t\t\t\t\t%.4e %.4e %.4e %.4e"%(matter_loss.item(), nonmatter_loss.item(), matter_sum_loss.item(), nonmatter_sum_loss.item()))
         
         return loss_avg/total_n_frames, matter_loss_avg/total_n_frames, nonmatter_loss_avg/total_n_frames, matter_sum_loss_avg/total_n_frames, nonmatter_sum_loss_avg/total_n_frames
@@ -176,7 +185,7 @@ class TrainLatticeMD:
 
         timer = Clock()
         print("")
-        print("%5s%24s%24s%24s%24s | %10s%5s\n"%("epoch", "mat2", "non-mat2", "mat_sum2", "non-mat_sum2", "lr", "time"),end="")
+        print("%5s%24s%24s%24s%24s | %10s%10s\n"%("epoch", "mat2", "non-mat2", "mat_sum2", "non-mat_sum2", "lr", "time"),end="")
 
         self.lattice_md_.unfreeze_model()
         timer.get_dt()
@@ -191,7 +200,7 @@ class TrainLatticeMD:
                                            matter_sum_loss_train.item()   , matter_sum_loss_test.item(), \
                                            nonmatter_sum_loss_train.item(), nonmatter_sum_loss_test.item(), \
                                            self.optimization.param_groups[0]["lr"].item()), end="")
-            print("%5.2f"%(timer.get_dt()))
+            print("%10.2f"%(timer.get_dt()))
             self.learning_rate_schedule.step()
 
         print("")
@@ -222,6 +231,53 @@ class TrainLatticeMD:
         print("\t weight decay = %s"%(self.weight_decay_))
         print("")
 
+    def create_octahedral_group_operation(self):
+        #Create a list of, permutations, permutaion of dims, negations, and flipping of dims for each quantity for Octahedral Group Symmetry
+        system_dim_offset = 2
+        matter_dim_offset = 6
+        batch_and_sequence_dim = [0, 1]
+        number_of_matters_dim  = [5]
+        stress_dim             = [5]
+        og = OctahedralGroup(self.device_)
+        og.print_octahedral_group()
+        print("")
+        self.number_of_octahedral_group_operations_ = og.size
+        self.matter_sequence_octahedral_group_permutation_ = []
+        self.matter_sequence_octahedral_group_flip_ = []
+        self.nonmatter_sequence_system_dim_octahedral_group_permutation_ = []
+        self.nonmatter_sequence_stress_dim_octahedral_group_permutation_ = []
+        self.nonmatter_sequence_octahedral_group_negation_ = []
+        for group_index in range(self.number_of_octahedral_group_operations_):
+            matter_permute_dim_tmp        =  og.octahedral_group_permutation[group_index].cpu().numpy()
+            matter_flip_dim_tmp           = (og.octahedral_group_negation[group_index]<0).nonzero().squeeze(1).cpu().numpy()
+            self.matter_sequence_octahedral_group_permutation_.append(tuple(batch_and_sequence_dim + list(system_dim_offset + matter_permute_dim_tmp) + number_of_matters_dim + list(matter_dim_offset + matter_permute_dim_tmp)))
+            self.matter_sequence_octahedral_group_flip_       .append(tuple(list(system_dim_offset + matter_flip_dim_tmp)+list(matter_dim_offset + matter_flip_dim_tmp)))
+
+            normal_stress_permute_tmp  = og.octahedral_group_permutation[group_index]
+            shear_stress_permute_tmp   = og.shear_stress_octahedral_group_permutation[group_index] + 3
+            pe_permute_tmp = torch.tensor([6]).to(self.device_)
+            normal_stress_negation_tmp = torch.ones(3).to(self.device_)
+            shear_stress_negation_tmp  = og.shear_stress_octahedral_group_negation[group_index]
+            pe_negation_tmp = torch.ones(1).to(self.device_)
+            self.nonmatter_sequence_system_dim_octahedral_group_permutation_.append(tuple(batch_and_sequence_dim + list(system_dim_offset + matter_permute_dim_tmp) + stress_dim))
+            self.nonmatter_sequence_stress_dim_octahedral_group_permutation_.append(torch.cat((normal_stress_permute_tmp,  shear_stress_permute_tmp,  pe_permute_tmp)))
+            self.nonmatter_sequence_octahedral_group_negation_              .append(torch.cat((normal_stress_negation_tmp, shear_stress_negation_tmp, pe_negation_tmp)))
+
+    def octahedral_group_operation(self, matter_sequence_data_untransformed, nonmatter_sequence_data_untransformed, nonmatter_sum_data_untransformed, batch_size, system_dim, group_index):
+        #matter_sequence_data:        (batch_size, sequence_length+1, system_dim3, number_of_matters, matter_dim, matter_dim, matter_dim)
+        #nonmatter_sequence_data:     (batch_size, sequence_length+1, system_dim3, number_of_nonmatter_features)
+        #nonmatter_sum_data:          (batch_size, sequence_length+1, number_of_nonmatter_features)
+        matter_sequence_data_transformed    = matter_sequence_data_untransformed   .view(batch_size, self.sequence_length_+1, *system_dim, self.number_of_matters_, self.matter_dim_, self.matter_dim_, self.matter_dim_)
+        nonmatter_sequence_data_transformed = nonmatter_sequence_data_untransformed.view(batch_size, self.sequence_length_+1, *system_dim, nonmatter_sequence_data_untransformed.shape[-1])
+                
+        matter_sequence_data_transformed    = matter_sequence_data_transformed   .permute(dims = self.matter_sequence_octahedral_group_permutation_[group_index]).flip(dims = self.matter_sequence_octahedral_group_flip_[group_index])
+        nonmatter_sequence_data_transformed = nonmatter_sequence_data_transformed.permute(dims = self.nonmatter_sequence_system_dim_octahedral_group_permutation_[group_index])[...,self.nonmatter_sequence_stress_dim_octahedral_group_permutation_[group_index]]*self.nonmatter_sequence_octahedral_group_negation_[group_index]
+        nonmatter_sum_data_transformed = nonmatter_sum_data_untransformed[...,self.nonmatter_sequence_stress_dim_octahedral_group_permutation_[group_index]]*self.nonmatter_sequence_octahedral_group_negation_[group_index]
+        
+        matter_sequence_data_transformed    = matter_sequence_data_transformed.flatten(start_dim = 2, end_dim = 4)
+        nonmatter_sequence_data_transformed = nonmatter_sequence_data_transformed.flatten(start_dim = 2, end_dim = 4)
+        return matter_sequence_data_transformed, nonmatter_sequence_data_transformed, nonmatter_sum_data_transformed
+
     def load_training_data(self):
         try:
             self.dataset_system_dim_ = []
@@ -240,33 +296,35 @@ class TrainLatticeMD:
                 fin = open("%s"%(training_data_dir),"rb")
                 self.sd_ = dill.load(fin)
                 fin.close()
-                number_of_matters_tmp, matter_dim_tmp, system_dim_tmp, sequence_length_tmp, \
-                matter_sequence_data_tmp, stress_sequence_data_tmp, pe_sequence_data_tmp, \
-                matter_sum_data_tmp,      stress_sum_data_tmp,      pe_sum_data_tmp = self.sd_.get_data()
+                number_of_matters, matter_dim, system_dim, sequence_length, \
+                matter_sequence_data, stress_sequence_data, pe_sequence_data, \
+                matter_sum_data,      stress_sum_data,      pe_sum_data = self.sd_.get_data()
 
                 matter_prefactor,     stress_prefactor,     pe_prefactor,\
                 matter_sum_prefactor, stress_sum_prefactor, pe_sum_prefactor = self.sd_.get_prefactor()
 
                 if training_index > 0:
-                    if self.number_of_matters_ != number_of_matters_tmp: raise NumberOfMattersException
-                    if self.matter_dim_        != matter_dim_tmp:        raise MatterDimException
-                    if self.sequence_length_   != sequence_length_tmp:   raise SequenceLengthException
+                    if self.number_of_matters_ != number_of_matters: raise NumberOfMattersException
+                    if self.matter_dim_        != matter_dim:        raise MatterDimException
+                    if self.sequence_length_   != sequence_length:   raise SequenceLengthException
                 else:
-                    self.number_of_matters_ = number_of_matters_tmp
-                    self.matter_dim_        = matter_dim_tmp
-                    self.sequence_length_   = sequence_length_tmp
+                    self.number_of_matters_ = number_of_matters
+                    self.matter_dim_        = matter_dim
+                    self.sequence_length_   = sequence_length
 
-                nonmatter_sequence_data_tmp = torch.cat((stress_sequence_data_tmp, pe_sequence_data_tmp), dim = -1)
-                nonmatter_sum_data_tmp = torch.cat((stress_sum_data_tmp, pe_sum_data_tmp), dim = -1)
+                nonmatter_sequence_data = torch.cat((stress_sequence_data, pe_sequence_data), dim = -1)
+                nonmatter_sum_data = torch.cat((stress_sum_data, pe_sum_data), dim = -1)
                 
                 self.dataset_matter_prefactor_.append(matter_prefactor.to(self.device_))
-                self.dataset_nonmatter_prefactor_.append(torch.cat((stress_prefactor,pe_prefactor)).to(self.device_))
+                stress_prefactor_avg = torch.cat((torch.ones(3)*stress_prefactor[:3].mean(), torch.ones(3)*stress_prefactor[3:].mean()))
+                self.dataset_nonmatter_prefactor_.append(torch.cat((stress_prefactor_avg, pe_prefactor)).to(self.device_))
                 self.dataset_matter_sum_prefactor_.append(matter_sum_prefactor.to(self.device_))
-                self.dataset_nonmatter_sum_prefactor_.append(torch.cat((stress_sum_prefactor,pe_sum_prefactor)).to(self.device_))
+                stress_sum_prefactor_avg = torch.cat((torch.ones(3)*stress_sum_prefactor[:3].mean(), torch.ones(3)*stress_sum_prefactor[3:].mean()))
+                self.dataset_nonmatter_sum_prefactor_.append(torch.cat((stress_sum_prefactor_avg, pe_sum_prefactor)).to(self.device_))
 
-                self.dataset_number_of_samples_.append(len(matter_sequence_data_tmp))
-                self.dataset_system_dim_.append(system_dim_tmp)
-                dataset = LatticeMDDataset(matter_sequence_data_tmp, nonmatter_sequence_data_tmp, matter_sum_data_tmp, nonmatter_sum_data_tmp, device = self.device_)
+                self.dataset_number_of_samples_.append(len(matter_sequence_data))
+                self.dataset_system_dim_.append(system_dim)
+                dataset = LatticeMDDataset(matter_sequence_data, nonmatter_sequence_data, matter_sum_data, nonmatter_sum_data, device = self.device_)
                 
                 total_n_test_sample        = int(self.test_ratio_*self.dataset_number_of_samples_[-1])
                 total_n_train_sample       = self.dataset_number_of_samples_[-1] - total_n_test_sample
@@ -277,10 +335,10 @@ class TrainLatticeMD:
                 self.test_loader_.append(torch.utils.data.DataLoader(dataset=test_dataset, batch_size=self.batch_size_,shuffle=False))
 
                 print("\t\tMatter prefactor        = %s"%(matter_prefactor.numpy()))
-                print("\t\tStress prefactor        = %s"%(stress_prefactor.numpy()))
+                print("\t\tStress prefactor        = %s"%(stress_prefactor_avg.numpy()))
                 print("\t\tPe     prefactor        = %s"%(pe_prefactor.numpy()))
                 print("\t\tMatter sum prefactor    = %s"%(matter_sum_prefactor.numpy()))
-                print("\t\tStress sum prefactor    = %s"%(stress_sum_prefactor.numpy()))
+                print("\t\tStress sum prefactor    = %s"%(stress_sum_prefactor_avg.numpy()))
                 print("\t\tPe     sum prefactor    = %s"%(pe_sum_prefactor.numpy()))
 
         except NumberOfMattersException:

@@ -256,7 +256,7 @@ class LatticeMD(nn.Module):
     #
     def __init__(self, number_of_matters, matter_dim, \
                  matter_conv_ae_kernal_size = (), matter_conv_ae_stride = (), \
-                    matter_linear_ae_hidden_size = (16, 16),    matter_linear_ae_encoded_size = 16, \
+                 matter_linear_ae_hidden_size = (16, 16),    matter_linear_ae_encoded_size = 16, \
                  nonmatter_linear_ae_hidden_size = (16, 16), nonmatter_linear_ae_encoded_size = 16, \
                  number_of_nonmatter_features = 7, number_of_lstm_layer = 1):
         super(LatticeMD, self).__init__()
@@ -334,54 +334,55 @@ class LatticeMD(nn.Module):
 
     def forward(self, matter_sequence, nonmatter_sequence, system_dim, matter_normalization = False, total_matter = 1.0):
         #input
-        #   matter_sequence:        (sequence_length, batch_size * system_dim3, number_of_matters, matter_dim, matter_dim, matter_dim)
-        #   nonmatter_sequence:     (sequence_length, batch_size * system_dim3, number_of_nonmatter_features)
+        #   matter_sequence:        (sequence_length-1, batch_size * system_dim3, number_of_matters, matter_dim, matter_dim, matter_dim)
+        #   nonmatter_sequence:     (sequence_length-1, batch_size * system_dim3, number_of_nonmatter_features)
         #   system_dim:             (batch_size, 3)
         #output
         #   predicted_matter:       (batch_size * system_dim3, number_of_matters, matter_dim, matter_dim, matter_dim)
         #   predicted_nonmatter:    (batch_size * system_dim3, number_of_nonmatter_features)
-        encoded_in = self.encode(matter_sequence, nonmatter_sequence)
+        encoded_in = self.encode(matter_sequence.diff(dim = 0), nonmatter_sequence.diff(dim = 0))
         lstm_in = self.get_neighbor_block_data(encoded_in, system_dim)
         out, (hn, cn) = self.advance(lstm_in)
         lstm_out = hn.sum(dim = 0) #(batch_size * system_dim3, lstm_out_dim)
         predicted_matter, predicted_nonmatter = self.decode(lstm_out)
+        
         if matter_normalization: predicted_matter = self.matter_normalize(predicted_matter, system_dim, total_matter)
         return predicted_matter, predicted_nonmatter
     
     def get_neighbor_block_data(self, encoded_in, system_dim):
-        #encoded_in:        (sequence_length, batch_size * system_dim3, lstm_out_dim)
-        lstm_in = encoded_in.view(len(encoded_in), -1, system_dim[0], system_dim[1], system_dim[2], self.lstm_out_dim_) #(sequence_length, batch_size, system_dim[0], system_dim[1], system_dim[2], lstm_out_dim)
+        #encoded_in:        (sequence_length-1, batch_size * system_dim3, lstm_out_dim)
+        lstm_in = encoded_in.view(len(encoded_in), -1, *system_dim, self.lstm_out_dim_) #(sequence_length-1, batch_size, *system_dim, lstm_out_dim)
         lstm_in = torch.stack((lstm_in, \
                                lstm_in.roll(shifts= 1, dims=2), \
                                lstm_in.roll(shifts=-1, dims=2), \
                                lstm_in.roll(shifts= 1, dims=3), \
                                lstm_in.roll(shifts=-1, dims=3), \
                                lstm_in.roll(shifts= 1, dims=4), \
-                               lstm_in.roll(shifts=-1, dims=4))).permute((1, 2, 3, 4, 5, 0, 6))  #(sequence_length, batch_size, system_dim[0], system_dim[1], system_dim[2], number_of_neighbor_block, lstm_out_dim)
-        lstm_in = lstm_in.flatten(start_dim = -2)             #(sequence_length, batch_size, system_dim[0], system_dim[1], system_dim[2], lstm_in_dim)
-        lstm_in = lstm_in.flatten(start_dim = 1, end_dim = 4) #(sequence_length, batch_size * system_dim3, lstm_in_dim)
+                               lstm_in.roll(shifts=-1, dims=4))).permute((1, 2, 3, 4, 5, 0, 6))  #(sequence_length-1, batch_size, *system_dim, number_of_neighbor_block, lstm_out_dim)
+        lstm_in = lstm_in.flatten(start_dim = -2)             #(sequence_length-1, batch_size, *system_dim, lstm_in_dim)
+        lstm_in = lstm_in.flatten(start_dim = 1, end_dim = 4) #(sequence_length-1, batch_size * system_dim3, lstm_in_dim)
         return lstm_in
 
     def advance(self, lstm_in):
-        #lstm_in:                   (sequence_length, batch_size * system_dim3, lstm_in_dim)
+        #lstm_in:                   (sequence_length-1, batch_size * system_dim3, lstm_in_dim)
         lstm_out, hidden = self.lstm_(lstm_in)
         return lstm_out, hidden
 
     def encode(self, matter_sequence, nonmatter_sequence):
-        #matter_sequence:           (sequence_length, batch_size * system_dim3, number_of_matters, matter_dim, matter_dim, matter_dim)
-        #nonmatter_sequence:        (sequence_length, batch_size * system_dim3, number_of_nonmatter_features)
-        matter_encoded = matter_sequence.flatten(start_dim = 0, end_dim = 1)                                            #(sequence_length * batch_size * system_dim3, number_of_matters, matter_dim, matter_dim, matter_dim)
+        #matter_sequence:           (sequence_length-1, batch_size * system_dim3, number_of_matters, matter_dim, matter_dim, matter_dim)
+        #nonmatter_sequence:        (sequence_length-1, batch_size * system_dim3, number_of_nonmatter_features)
+        matter_encoded = matter_sequence.flatten(start_dim = 0, end_dim = 1)                                            #(sequence_length-1 * batch_size * system_dim3, number_of_matters, matter_dim, matter_dim, matter_dim)
         if self.matter_ae_type_ == 1:
-            matter_encoded = self.matter_ae_.encode(matter_encoded.flatten(start_dim = 1))                              #(sequence_length * batch_size * system_dim3, matter_encoded_flatten_dim)
+            matter_encoded = self.matter_ae_.encode(matter_encoded.flatten(start_dim = 1))                              #(sequence_length-1 * batch_size * system_dim3, matter_encoded_flatten_dim)
         else:
-            matter_encoded = self.matter_ae_.encode(matter_encoded).flatten(start_dim = 1)                              #(sequence_length * batch_size * system_dim3, number_of_matters, matter_encoded_dim, matter_encoded_dim, matter_encoded_dim)
-        matter_encoded = matter_encoded.view(len(nonmatter_sequence), -1, self.matter_encoded_flatten_dim_)             #(sequence_length,  batch_size * system_dim3, matter_encoded_flatten_dim)
+            matter_encoded = self.matter_ae_.encode(matter_encoded).flatten(start_dim = 1)                              #(sequence_length-1 * batch_size * system_dim3, number_of_matters, matter_encoded_dim, matter_encoded_dim, matter_encoded_dim)
+        matter_encoded = matter_encoded.view(len(nonmatter_sequence), -1, self.matter_encoded_flatten_dim_)             #(sequence_length-1,  batch_size * system_dim3, matter_encoded_flatten_dim)
 
-        nonmatter_encoded = nonmatter_sequence.flatten(start_dim = 0, end_dim = 1)                                              #(sequence_length * batch_size * system_dim3, number_of_nonmatter_features_)
-        nonmatter_encoded = self.nonmatter_ae_.encode(nonmatter_encoded)                                                #(sequence_length * batch_size * system_dim3, nonmatter_encoded_dim)
-        nonmatter_encoded = nonmatter_encoded.view(len(nonmatter_sequence), -1, self.nonmatter_encoded_dim_)            #(sequence_length,  batch_size * system_dim3, nonmatter_encoded_dim)
+        nonmatter_encoded = nonmatter_sequence.flatten(start_dim = 0, end_dim = 1)                                              #(sequence_length-1 * batch_size * system_dim3, number_of_nonmatter_features_)
+        nonmatter_encoded = self.nonmatter_ae_.encode(nonmatter_encoded)                                                #(sequence_length-1 * batch_size * system_dim3, nonmatter_encoded_dim)
+        nonmatter_encoded = nonmatter_encoded.view(len(nonmatter_sequence), -1, self.nonmatter_encoded_dim_)            #(sequence_length-1,  batch_size * system_dim3, nonmatter_encoded_dim)
 
-        encoded_in = torch.cat((matter_encoded, nonmatter_encoded), dim = -1)             #(sequence_length,  batch_size * system_dim3, lstm_out_dim)
+        encoded_in = torch.cat((matter_encoded, nonmatter_encoded), dim = -1)             #(sequence_length-1,  batch_size * system_dim3, lstm_out_dim)
         return encoded_in
     
     def decode(self, lstm_out):
