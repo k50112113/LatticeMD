@@ -53,13 +53,16 @@ class LatticeMDSimulator:
         output_data.matter_sequence_data_ = self.current_matter_sequence.detach().clone().cpu()
         output_data.nonmatter_sequence_data_ = self.current_nonmatter_sequence.detach().clone().cpu()
         for i_step in range(steps):
-            next_matter, next_nonmatter = self.lattice_md_(self.current_matter_sequence, self.current_nonmatter_sequence, self.system_dim_, matter_normalization = True, total_matter = self.total_matter_)
+            next_matter, next_nonmatter = self.lattice_md_(self.current_matter_sequence, self.current_nonmatter_sequence, self.system_dim_)
+            print(next_matter[next_matter.sum(dim=(1,2,3,4)).argmax()].flatten())
+            next_matter    += self.current_matter_sequence[-1]
+            next_nonmatter += self.current_nonmatter_sequence[-1]
             self.current_matter_sequence = torch.cat((self.current_matter_sequence[1:], next_matter.unsqueeze(0)), dim = 0)
             self.current_nonmatter_sequence = torch.cat((self.current_nonmatter_sequence[1:], next_nonmatter.unsqueeze(0)), dim = 0)
 
             output_data.matter_sequence_data_ = torch.cat((output_data.matter_sequence_data_, next_matter.unsqueeze(0).detach().clone().cpu()), dim = 0)
             output_data.nonmatter_sequence_data_ = torch.cat((output_data.nonmatter_sequence_data_, next_nonmatter.unsqueeze(0).detach().clone().cpu()), dim = 0)
-            print(i_step)
+            print(i_step, next_matter.sum().item())
         
         output_data.matter_sequence_data_ = output_data.matter_sequence_data_.unsqueeze(1)
         output_data.nonmatter_sequence_data_ = output_data.nonmatter_sequence_data_.unsqueeze(1)
