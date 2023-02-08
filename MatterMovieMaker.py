@@ -104,7 +104,7 @@ for start_snapshot in split_start_snapshot_array:
     X, Y, Z = np.mgrid[:vol_dim[0], :vol_dim[1], :vol_dim[2]]
     vol = vol.numpy()
 
-    fig = go.Figure(data=go.Volume(x=X.flatten(), y=Y.flatten(), z=Z.flatten(), value=vol.flatten(), isomin=isomin, isomax=isomax, opacity=opacity, surface_count=surface_count,))
+    fig = go.Figure(data=go.Volume(x=X.flatten(), y=Y.flatten(), z=Z.flatten(), value=vol.flatten(), isomin=isomin, isomax=isomax, opacity=opacity, surface_count=surface_count, colorscale = 'jet'))
     fig.update_layout(scene_xaxis_showticklabels=False, scene_yaxis_showticklabels=False, scene_zaxis_showticklabels=False)
     fig.write_image(this_filename)
 
