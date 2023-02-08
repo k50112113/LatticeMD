@@ -171,7 +171,7 @@ class MDSequenceData:
     def get_data(self):
         return self.number_of_matters_, self.matter_dim_, self.system_dim_, self.sequence_length_, \
                self.matter_sequence_data_, self.momentum_sequence_data_, self.stress_sequence_data_, self.pe_sequence_data_, \
-               self.matter_sum_data_ ,                                   self.stress_sum_data_,      self.pe_sum_data_
+               self.matter_sum_data_,                                    self.stress_sum_data_,      self.pe_sum_data_
 
     def get_prefactor(self):
         return self.matter_prefactor_,     self.momentum_prefactor_,    self.stress_prefactor_,     self.pe_prefactor_,\
