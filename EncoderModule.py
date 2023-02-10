@@ -80,8 +80,8 @@ class MLPAutoencoder(nn.Module):
     
     def print_info(self):
         print("%35s"%("Autoencoder dim: "), end = "")
-        for index in range(self.number_of_layer_+1):      print("%d -> "%(self.encoder_layer_size_[index]), end = "")
-        for index in range(1, self.number_of_layer_): print("%d -> "%(self.decoder_layer_size_[index]), end = "")
+        for index in range(self.number_of_layer_+1):      print("%2d -> "%(self.encoder_layer_size_[index]), end = "")
+        for index in range(1, self.number_of_layer_): print("%2d -> "%(self.decoder_layer_size_[index]), end = "")
         print("%d"%(self.decoder_layer_size_[-1]))
 
     def encode(self, x):
@@ -102,6 +102,8 @@ class MLPAutoencoder(nn.Module):
     
     def forward(self, x):
         return self.decode(self.encode(x))
+
+
 
 class DummyAutoencoder:
     def __init__(self):   pass
