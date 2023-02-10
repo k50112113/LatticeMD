@@ -60,7 +60,7 @@ class ConvAutoencoder(nn.Module):
         return self.decode(self.encode(x))
 
 class MLPAutoencoder(nn.Module):
-    def __init__(self, input_size, encode_size, layer_size = (8, 8), activation_type = 'tanh'):
+    def __init__(self, input_size, encode_size, layer_size, activation_type = 'tanh'):
         super(MLPAutoencoder, self).__init__()
 
         self.encoder_layer_ = nn.ModuleList()
@@ -80,7 +80,7 @@ class MLPAutoencoder(nn.Module):
     
     def print_info(self):
         print("%35s"%("Autoencoder dim: "), end = "")
-        for index in range(self.number_of_layer_+1):      print("%2d -> "%(self.encoder_layer_size_[index]), end = "")
+        for index in range(self.number_of_layer_ + 1):      print("%2d -> "%(self.encoder_layer_size_[index]), end = "")
         for index in range(1, self.number_of_layer_): print("%2d -> "%(self.decoder_layer_size_[index]), end = "")
         print("%d"%(self.decoder_layer_size_[-1]))
 
@@ -103,7 +103,37 @@ class MLPAutoencoder(nn.Module):
     def forward(self, x):
         return self.decode(self.encode(x))
 
+class MLPLayer(nn.Module):
+    def __init__(self, input_size, encode_size, layer_size, activation_type = 'tanh', output_activation = False):
+        super(MLPLayer, self).__init__()
 
+        self.encoder_layer_ = nn.ModuleList()
+        self.decoder_layer_ = nn.ModuleList()
+        self.output_activation = output_activation
+        if len(layer_size) > 0:
+            self.encoder_layer_size_ = [input_size] +  list(layer_size)       + [encode_size]
+            self.number_of_layer_ = len(self.encoder_layer_size_) - 1
+            for index in range(self.number_of_layer_):
+                self.encoder_layer_.append(nn.Linear(self.encoder_layer_size_[index], self.encoder_layer_size_[index + 1]))
+            self.actv_ = nn_activations[activation_type]
+        else:
+            print("Error: no layer size information")
+            exit()
+    
+    def print_info(self):
+        print("%35s"%("Layer dim: "), end = "")
+        for index in range(self.number_of_layer_): print("%2d -> "%(self.encoder_layer_size_[index]), end = "")
+        print("%d"%(self.encoder_layer_size_[-1]))
+    
+    def forward(self, x):
+        #x: (batch_size, input_size)
+        y = x
+        for index in range(self.number_of_layer_ - 1):
+            y = self.encoder_layer_[index](y)
+            y = self.actv_(y)
+        y = self.encoder_layer_[-1](y)
+        if self.output_activation: y = self.actv_(y)
+        return y
 
 class DummyAutoencoder:
     def __init__(self):   pass
