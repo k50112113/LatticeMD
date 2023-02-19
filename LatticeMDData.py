@@ -10,22 +10,24 @@ class MDSequenceData:
     def __init__(self, system_dim):
         self.system_dim_ = system_dim
         self.system_dim3_ = system_dim[0]*system_dim[1]*system_dim[2]
-        self.number_of_matters_    = None
-        self.matter_dim_           = None
-        self.sequence_length_      = None
-        self.matter_sequence_data_ = None #(N_batches, sequence_length, system_dim3, number_of_matters, matter_dim, matter_dim, matter_dim)
-        self.stress_sequence_data_ = None
-        self.pe_sequence_data_     = None
-        self.matter_sum_data_      = None
-        self.stress_sum_data_      = None
-        self.pe_sum_data_          = None
+        self.number_of_matters_      = None
+        self.matter_dim_             = None
+        self.sequence_length_        = None
+        self.matter_sequence_data_   = None #(N_batches, sequence_length, system_dim3, number_of_matters, matter_dim, matter_dim, matter_dim)
+        self.momentum_sequence_data_ = None
+        self.stress_sequence_data_   = None
+        self.pe_sequence_data_       = None
+        self.matter_sum_data_        = None
+        self.stress_sum_data_        = None
+        self.pe_sum_data_            = None
 
-        self.matter_prefactor_     = None
-        self.stress_prefactor_     = None
-        self.pe_prefactor_         = None
-        self.matter_sum_prefactor_ = None
-        self.stress_sum_prefactor_ = None
-        self.pe_sum_prefactor_     = None
+        self.matter_prefactor_       = None
+        self.momentum_prefactor_     = None
+        self.stress_prefactor_       = None
+        self.pe_prefactor_           = None
+        self.matter_sum_prefactor_   = None
+        self.stress_sum_prefactor_   = None
+        self.pe_sum_prefactor_       = None
 
     def load_data(self, input_dir, sequence_length, max_md_snapshot = -1, md_snapshot_start_indices = [0], output_dir='./', select_matter = (), moving_average_length = 1, md_snapshot_per_frame = 1):
         #sequence_length = LSTM length
@@ -68,21 +70,21 @@ class MDSequenceData:
             if self.matter_dim_**3 * self.system_dim3_ != data.shape[1]: raise DimensionalityException
             matter_data = data
             
-            # read matter, momentum of each chunk. [unit: ]
-            print("Reading %s/momentum.txt..."%(input_dir))
-            keys, step, data = self.read_lammps_ave("%s/momentum.txt"%(input_dir), max_md_snapshot = max_md_snapshot)
-            if len(self.data_step_) != len(step) or ((self.data_step_-step)**2).sum() > 0.0: raise TimestepException
-            if len(select_matter) == 0:
-                if self.number_of_matters_*3 != len(keys): raise NumberOfElementsException
-                data = data
-            else:
-                select_momentum = []
-                for a_matter in select_matter: select_momentum += [a_matter*3, a_matter*3+1, a_matter*3+2]
-                select_momentum = tuple(select_momentum)
-                data = data[:, :, select_momentum]
-            matter_dim_tmp = int(round((data.shape[1]/self.system_dim3_)**(1/3), 0))
-            if self.matter_dim_ != matter_dim_tmp: raise DimensionalityException
-            momentum_data = data
+            # read momentum, momentum of each chunk. [unit: ]
+            # print("Reading %s/momentum.txt..."%(input_dir))
+            # keys, step, data = self.read_lammps_ave("%s/momentum.txt"%(input_dir), max_md_snapshot = max_md_snapshot)
+            # if len(self.data_step_) != len(step) or ((self.data_step_-step)**2).sum() > 0.0: raise TimestepException
+            # if len(select_matter) == 0:
+            #     if self.number_of_matters_*3 != len(keys): raise NumberOfElementsException
+            #     data = data
+            # else:
+            #     select_momentum = []
+            #     for a_matter in select_matter: select_momentum += [a_matter*3, a_matter*3+1, a_matter*3+2]
+            #     select_momentum = tuple(select_momentum)
+            #     data = data[:, :, select_momentum]
+            # matter_dim_tmp = int(round((data.shape[1]/self.system_dim3_)**(1/3), 0))
+            # if self.matter_dim_ != matter_dim_tmp: raise DimensionalityException
+            # momentum_data = data
 
             # read matter sum
             print("Reading %s/matter_sum_list.txt..."%(input_dir))
@@ -116,7 +118,7 @@ class MDSequenceData:
 
         #compute prefactor
         self.matter_prefactor_     = 1.0/self.compute_moving_average_std(matter_data,     moving_average_length, md_snapshot_per_frame, dim = (0, 1))
-        self.momentum_prefactor_   = 1.0/self.compute_moving_average_std(momentum_data,   moving_average_length, md_snapshot_per_frame, dim = (0, 1))
+        # self.momentum_prefactor_   = 1.0/self.compute_moving_average_std(momentum_data,   moving_average_length, md_snapshot_per_frame, dim = (0, 1))
         self.stress_prefactor_     = 1.0/self.compute_moving_average_std(stress_data,     moving_average_length, md_snapshot_per_frame, dim = (0, 1))
         self.pe_prefactor_         = 1.0/self.compute_moving_average_std(pe_data,         moving_average_length, md_snapshot_per_frame, dim = (0, 1))
         self.matter_sum_prefactor_ = 1.0/matter_sum_data
@@ -125,14 +127,14 @@ class MDSequenceData:
         
         #split data into sequences
         self.matter_sequence_data_   = self.split_data_sequence(matter_data,     self.sequence_length_+1, md_snapshot_start_indices, moving_average_length, md_snapshot_per_frame, verbose = True)
-        self.momentum_sequence_data_ = self.split_data_sequence(momentum_data,   self.sequence_length_+1, md_snapshot_start_indices, moving_average_length, md_snapshot_per_frame)
+        # self.momentum_sequence_data_ = self.split_data_sequence(momentum_data,   self.sequence_length_+1, md_snapshot_start_indices, moving_average_length, md_snapshot_per_frame)
         self.number_of_batches_      = len(self.matter_sequence_data_)
         ss = self.sequence_length_ + 1
         self.matter_sequence_data_   = self.matter_sequence_data_  .view(self.number_of_batches_, ss, self.system_dim_[0], self.matter_dim_, self.system_dim_[1], self.matter_dim_, self.system_dim_[2], self.matter_dim_, self.number_of_matters_)   .permute(0, 1, 2, 4, 6, 8, 3, 5, 7)
-        self.momentum_sequence_data_ = self.momentum_sequence_data_.view(self.number_of_batches_, ss, self.system_dim_[0], self.matter_dim_, self.system_dim_[1], self.matter_dim_, self.system_dim_[2], self.matter_dim_, self.number_of_matters_, 3).permute(0, 1, 2, 4, 6, 8, 9, 3, 5, 7)
+        # self.momentum_sequence_data_ = self.momentum_sequence_data_.view(self.number_of_batches_, ss, self.system_dim_[0], self.matter_dim_, self.system_dim_[1], self.matter_dim_, self.system_dim_[2], self.matter_dim_, self.number_of_matters_, 3).permute(0, 1, 2, 4, 6, 8, 9, 3, 5, 7)
         
         self.matter_sequence_data_   = self.matter_sequence_data_  .flatten(start_dim = 2, end_dim = 4)
-        self.momentum_sequence_data_ = self.momentum_sequence_data_.flatten(start_dim = 2, end_dim = 4)
+        # self.momentum_sequence_data_ = self.momentum_sequence_data_.flatten(start_dim = 2, end_dim = 4)
 
         self.stress_sequence_data_   = self.split_data_sequence(stress_data,     self.sequence_length_+1, md_snapshot_start_indices, moving_average_length, md_snapshot_per_frame)
         self.pe_sequence_data_       = self.split_data_sequence(pe_data,         self.sequence_length_+1, md_snapshot_start_indices, moving_average_length, md_snapshot_per_frame)
@@ -149,7 +151,7 @@ class MDSequenceData:
         self.pe_sum_prefactor_     = self.pe_sum_prefactor_.cpu()
         
         self.matter_sequence_data_   = self.matter_sequence_data_.cpu()
-        self.momentum_sequence_data_ = self.momentum_sequence_data_.cpu()
+        # self.momentum_sequence_data_ = self.momentum_sequence_data_.cpu()
         self.stress_sequence_data_   = self.stress_sequence_data_.cpu()
         self.pe_sequence_data_       = self.pe_sequence_data_.cpu()
         self.matter_sum_data_        = self.matter_sum_data_.cpu()
