@@ -102,7 +102,7 @@ class MDSequenceData:
             exit()
 
         matter_data     = matter_data.to(device)
-        momentum_data   = momentum_data.to(device)
+        # momentum_data   = momentum_data.to(device)
         stress_data     = stress_data.to(device)
         pe_data         = pe_data.to(device)
         matter_sum_data = matter_sum_data.to(device)
@@ -143,7 +143,7 @@ class MDSequenceData:
         self.matter_sum_data_        = torch.tile(matter_sum_data, (self.number_of_batches_, 1))
 
         self.matter_prefactor_     = self.matter_prefactor_.cpu()
-        self.momentum_prefactor_   = self.momentum_prefactor_.cpu()
+        # self.momentum_prefactor_   = self.momentum_prefactor_.cpu()
         self.stress_prefactor_     = self.stress_prefactor_.cpu()
         self.pe_prefactor_         = self.pe_prefactor_.cpu()
         self.matter_sum_prefactor_ = self.matter_sum_prefactor_.cpu()

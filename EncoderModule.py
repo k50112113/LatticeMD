@@ -1,8 +1,6 @@
 import torch
 import torch.nn as nn
 import os
-torch.set_default_tensor_type(torch.FloatTensor)
-#torch.set_default_tensor_type(torch.DoubleTensor)
 
 nn_activations = {
     'relu':    nn.ReLU(),

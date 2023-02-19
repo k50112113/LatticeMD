@@ -2,7 +2,8 @@ import torch
 import torch.nn as nn
 import os
 import sys
-from LatticeMDModel import LatticeMD, LatticeMDDataset
+from LatticeMDData import LatticeMDDataset
+from LatticeMDModel import LatticeMD
 from OctahedralGroup import OctahedralGroup
 import dill
 from Clock import Clock
@@ -17,7 +18,7 @@ class TrainLatticeMD:
         self.read_input_file()
 
         ###################################### Load basic information ######################################
-        print("%s - single precision."%(self.settings_["mode"]))
+        print("%s"%(self.settings_["mode"]))
         self.output_dir = self.settings_["output_dir"]
         self.output_log = self.settings_["output_log"]
         if os.path.isdir(self.output_dir) == False: os.mkdir(self.output_dir)
@@ -45,6 +46,8 @@ class TrainLatticeMD:
         ###################################### Load MD sequence data ######################################
         print("Loading MD sequence data...")
         self.training_data_dir_list_ = self.settings_["training_data_dir_list"].strip().split()
+        self.include_stress_fg     = False if self.settings_.get("stress") is None else self.settings_.get("stress").lower() == 'true'
+        self.include_pe_fg         = False if self.settings_.get("pe")     is None else self.settings_.get("pe").lower() == 'true'
         self.load_training_data()
         ###################################### Load MD sequence data ######################################
 
@@ -65,18 +68,32 @@ class TrainLatticeMD:
             self.load_model()    
         else:
             print("Create new model")
-            matter_conv_ae_kernal_size       = () if self.settings_.get("matter_conv_ae_kernal_size")    is None else tuple([int(i) for i in self.settings_.get("matter_conv_ae_kernal_size").strip().split()])
-            matter_conv_ae_stride            = () if self.settings_.get("matter_conv_ae_stride")         is None else tuple([int(i) for i in self.settings_.get("matter_conv_ae_stride").strip().split()])
-            matter_linear_ae_hidden_size     = () if self.settings_.get("matter_linear_ae_hidden_size")  is None else tuple([int(i) for i in self.settings_.get("matter_linear_ae_hidden_size").strip().split()])
-            matter_linear_ae_encoded_size    = 1  if self.settings_.get("matter_linear_ae_encoded_size") is None else int(self.settings_.get("matter_linear_ae_encoded_size"))
-            nonmatter_linear_ae_hidden_size  = () if self.settings_.get("nonmatter_linear_ae_hidden_size") is None else tuple([int(i) for i in self.settings_.get("nonmatter_linear_ae_hidden_size").strip().split()])
-            nonmatter_linear_ae_encoded_size = 1  if self.settings_.get("nonmatter_linear_ae_encoded_size") is None else int(self.settings_.get("nonmatter_linear_ae_encoded_size"))
-            number_of_lstm_layer = 1 if self.settings_.get("number_of_lstm_layer") is None else int(self.settings_.get("number_of_lstm_layer"))
+            matter_encoder_conv_ae_kernal_size  = ( 3,  3) if self.settings_.get("matter_encoder_conv_ae_kernal_size")    is None else tuple([int(i) for i in self.settings_.get("matter_encoder_conv_ae_kernal_size").strip().split()])
+            matter_encoder_conv_ae_stride       = ( 2,  2) if self.settings_.get("matter_encoder_conv_ae_stride")         is None else tuple([int(i) for i in self.settings_.get("matter_encoder_conv_ae_stride").strip().split()])
+            matter_encoder_activation           = 'silu'   if self.settings_.get("matter_encoder_activation")             is None else self.settings_.get("matter_encoder_activation")
+            
+            matter_decoder_conv_ae_kernal_size  = ( 2,  2) if self.settings_.get("matter_decoder_conv_ae_kernal_size")    is None else tuple([int(i) for i in self.settings_.get("matter_decoder_conv_ae_kernal_size").strip().split()])
+            matter_decoder_conv_ae_stride       = ( 1,  1) if self.settings_.get("matter_decoder_conv_ae_stride")         is None else tuple([int(i) for i in self.settings_.get("matter_decoder_conv_ae_stride").strip().split()])
+            matter_decoder_activation           = 'silu'   if self.settings_.get("matter_decoder_activation")             is None else self.settings_.get("matter_decoder_activation")
+
+            nonmatter_encoder_hidden_size       = (32, 16) if self.settings_.get("nonmatter_encoder_hidden_size")         is None else tuple([int(i) for i in self.settings_.get("nonmatter_encoder_hidden_size").strip().split()])
+            nonmatter_encoder_activation        = 'tanh'   if self.settings_.get("nonmatter_encoder_activation")          is None else self.settings_.get("nonmatter_encoder_activation")
+            nonmatter_encoded_size              = 8        if self.settings_.get("nonmatter_encoded_size")                is None else int(self.settings_.get("nonmatter_encoded_size"))
+            
+            nonmatter_decoder_hidden_size       = (32, 16) if self.settings_.get("nonmatter_decoder_hidden_size")         is None else tuple([int(i) for i in self.settings_.get("nonmatter_decoder_hidden_size").strip().split()])
+            nonmatter_decoder_activation        = 'tanh'   if self.settings_.get("nonmatter_decoder_activation")          is None else self.settings_.get("nonmatter_decoder_activation")
+
+            number_of_lstm_layer                = 1        if self.settings_.get("number_of_lstm_layer") is None else int(self.settings_.get("number_of_lstm_layer"))
+            number_of_nonmatter_features        = 0
+            if self.include_stress_fg:        number_of_nonmatter_features += 6
+            if self.include_pe_fg:            number_of_nonmatter_features += 1
+            
             self.lattice_md_ = LatticeMD(number_of_matters = self.number_of_matters_, matter_dim = self.matter_dim_, \
-                                         matter_conv_ae_kernal_size = matter_conv_ae_kernal_size, matter_conv_ae_stride = matter_conv_ae_stride, \
-                                         matter_linear_ae_hidden_size = matter_linear_ae_hidden_size, matter_linear_ae_encoded_size = matter_linear_ae_encoded_size, \
-                                         nonmatter_linear_ae_hidden_size = nonmatter_linear_ae_hidden_size, nonmatter_linear_ae_encoded_size = nonmatter_linear_ae_encoded_size, \
-                                         number_of_lstm_layer = number_of_lstm_layer)
+                                         matter_encoder_conv_ae_kernal_size = matter_encoder_conv_ae_kernal_size, matter_encoder_conv_ae_stride = matter_encoder_conv_ae_stride, matter_encoder_activation = matter_encoder_activation, \
+                                         matter_decoder_conv_ae_kernal_size = matter_decoder_conv_ae_kernal_size, matter_decoder_conv_ae_stride = matter_decoder_conv_ae_stride, matter_decoder_activation = matter_decoder_activation, \
+                                         nonmatter_encoder_hidden_size = nonmatter_encoder_hidden_size,           nonmatter_encoder_activation = nonmatter_encoder_activation,   nonmatter_encoded_size = nonmatter_encoded_size, \
+                                         nonmatter_decoder_hidden_size = nonmatter_decoder_hidden_size,           nonmatter_decoder_activation = nonmatter_decoder_activation, \
+                                         number_of_nonmatter_features = number_of_nonmatter_features,             number_of_lstm_layer = number_of_lstm_layer)
             self.lattice_md_.to(self.device_)
 
     def batched_data_sequence_to_model_input(self, x):
@@ -129,58 +146,65 @@ class TrainLatticeMD:
 
                     matter_sequence_data, nonmatter_sequence_data, nonmatter_sum_data = self.octahedral_group_operation(matter_sequence_data_untransformed, nonmatter_sequence_data_untransformed, nonmatter_sum_data_untransformed, batch_size, system_dim, group_index)
                     
-                    if not test_fg: self.optimization.zero_grad()
-                    
-                    #reshape input from batch-first to sequence-first
-                    #flatten batch and system_dim dimensions
+                    #reshape input from batch-first to sequence-first, flatten batch and system_dim dimensions
+                    #split sequence into input (t = 0~sequence_length-1) and output (t = last element)
                     matter_sequence    = self.batched_data_sequence_to_model_input(matter_sequence_data)
-                    nonmatter_sequence = self.batched_data_sequence_to_model_input(nonmatter_sequence_data)
+                    matter_sequence_in = matter_sequence[:-1]
+                    if self.lattice_md_.number_of_nonmatter_features_ > 0:
+                        nonmatter_sequence = self.batched_data_sequence_to_model_input(nonmatter_sequence_data)
+                        nonmatter_sequence_in = nonmatter_sequence[:-1]
+                    else:
+                        nonmatter_sequence_in = None
                     
-                    #test with batch_size = 1
+                    # test with batch_size = 1
                     # print(nonmatter_sequence[-1].sum(dim = 0)[ -1]/nonmatter_sum_data[0, -1, -1])
                     # print(nonmatter_sequence[-1].sum(dim = 0)[:-1]/nonmatter_sum_data[0, -1, :-1])
                     # print(nonmatter_sum_data[0, -1, :-1])
 
-                    #split sequence into input (t = 0~sequence_length-1) and output (t = last element)
-                    matter_sequence_in = matter_sequence[:-1]
-                    nonmatter_sequence_in = nonmatter_sequence[:-1]
-
                     #predict
                     predicted_matter_tmp, predicted_nonmatter_tmp = self.lattice_md_(matter_sequence_in, nonmatter_sequence_in, system_dim)
-                    predicted_matter_tmp    += matter_sequence_in[-1]
-                    predicted_nonmatter_tmp += nonmatter_sequence_in[-1]
-
-                    #compute loss
-                    predicted_matter     = predicted_matter_tmp*self.dataset_matter_prefactor_[training_index]
-                    predicted_nonmatter  = predicted_nonmatter_tmp*self.dataset_nonmatter_prefactor_[training_index]
-                    labeled_matter       =    matter_sequence[-1] * self.dataset_matter_prefactor_[training_index]
-                    labeled_nonmatter    = nonmatter_sequence[-1] * self.dataset_nonmatter_prefactor_[training_index]
-                    matter_loss          = self.compute_loss(predicted_matter, labeled_matter)
-                    nonmatter_loss       = self.compute_loss(predicted_nonmatter, labeled_nonmatter)
-
-                    #compute sum_loss
-                    predicted_matter_sum    = predicted_matter_tmp.view(batch_size, system_dim3, self.number_of_matters_, self.matter_dim_, self.matter_dim_, self.matter_dim_).sum(dim = (1, 3, 4, 5))*self.dataset_matter_sum_prefactor_[training_index]
-                    predicted_nonmatter_sum = predicted_nonmatter_tmp.view(batch_size, system_dim3, 7).sum(dim = 1)*self.dataset_nonmatter_sum_prefactor_[training_index]
-                    labeled_matter_sum      = matter_sum_data*self.dataset_matter_sum_prefactor_[training_index]
-                    labeled_nonmatter_sum   = nonmatter_sum_data[:, -1, :]*self.dataset_nonmatter_sum_prefactor_[training_index]
-                    matter_sum_loss         = self.compute_loss(predicted_matter_sum, labeled_matter_sum)
-                    nonmatter_sum_loss      = self.compute_loss(predicted_nonmatter_sum, labeled_nonmatter_sum)
                     
+                    #compute matter loss
+                    predicted_matter_tmp   += matter_sequence_in[-1]
+                    predicted_matter        = predicted_matter_tmp*self.dataset_matter_prefactor_[training_index]
+                    labeled_matter          =    matter_sequence[-1] * self.dataset_matter_prefactor_[training_index]
+                    matter_loss             = self.compute_loss(predicted_matter, labeled_matter)
+                    predicted_matter_sum    = predicted_matter_tmp.view(batch_size, system_dim3, self.number_of_matters_, self.matter_dim_, self.matter_dim_, self.matter_dim_).sum(dim = (1, 3, 4, 5))*self.dataset_matter_sum_prefactor_[training_index]
+                    labeled_matter_sum      = matter_sum_data*self.dataset_matter_sum_prefactor_[training_index]
+                    matter_sum_loss         = self.compute_loss(predicted_matter_sum, labeled_matter_sum)
+                    matter_loss_avg        += matter_loss.detach().cpu()*batch_size
+                    matter_sum_loss_avg    += matter_sum_loss.detach().cpu()*batch_size
+
+                    #compute nonmatter loss
+                    if self.lattice_md_.number_of_nonmatter_features_ > 0:
+                        predicted_nonmatter_tmp += nonmatter_sequence_in[-1]
+                        predicted_nonmatter      = predicted_nonmatter_tmp*self.dataset_nonmatter_prefactor_[training_index]                    
+                        labeled_nonmatter        = nonmatter_sequence[-1] * self.dataset_nonmatter_prefactor_[training_index]
+                        nonmatter_loss           = self.compute_loss(predicted_nonmatter, labeled_nonmatter)
+                        predicted_nonmatter_sum  = predicted_nonmatter_tmp.view(batch_size, system_dim3, 7).sum(dim = 1)*self.dataset_nonmatter_sum_prefactor_[training_index]
+                        labeled_nonmatter_sum    = nonmatter_sum_data[:, -1, :]*self.dataset_nonmatter_sum_prefactor_[training_index]
+                        nonmatter_sum_loss       = self.compute_loss(predicted_nonmatter_sum, labeled_nonmatter_sum)
+                        nonmatter_loss_avg      += nonmatter_loss.detach().cpu()*batch_size
+                        nonmatter_sum_loss_avg  += nonmatter_sum_loss.detach().cpu()*batch_size  
+                    else:
+                        nonmatter_loss = 0.
+                        nonmatter_sum_loss = 0.
+
+                    loss_avg += loss.detach().cpu()*batch_size
                     # print("%.4e %.4e %.4e %.4e"%(matter_loss.item(), nonmatter_loss.item(), matter_sum_loss.item(), nonmatter_sum_loss.item()))
                     loss = matter_loss + nonmatter_loss + matter_sum_loss + nonmatter_sum_loss
                     if not test_fg:
+                        self.optimization.zero_grad()
                         loss.backward()
                         self.optimization.step()
 
-                    loss_avg               += loss.detach().cpu()*batch_size
-                    matter_loss_avg        += matter_loss.detach().cpu()*batch_size
-                    nonmatter_loss_avg     += nonmatter_loss.detach().cpu()*batch_size
-                    matter_sum_loss_avg    += matter_sum_loss.detach().cpu()*batch_size
-                    nonmatter_sum_loss_avg += nonmatter_sum_loss.detach().cpu()*batch_size
-                    
-        #print("\t\t\t\t\t\t\t\t\t%.4e %.4e %.4e %.4e"%(matter_loss.item(), nonmatter_loss.item(), matter_sum_loss.item(), nonmatter_sum_loss.item()))
-        
-        return loss_avg/total_n_frames, matter_loss_avg/total_n_frames, nonmatter_loss_avg/total_n_frames, matter_sum_loss_avg/total_n_frames, nonmatter_sum_loss_avg/total_n_frames
+        loss_avg               /= total_n_frames
+        matter_loss_avg        /= total_n_frames
+        nonmatter_loss_avg     /= total_n_frames
+        matter_sum_loss_avg    /= total_n_frames
+        nonmatter_sum_loss_avg /= total_n_frames
+
+        return loss_avg, matter_loss_avg, nonmatter_loss_avg, matter_sum_loss_avg, nonmatter_sum_loss_avg
 
     def train(self):
         sys.stdout = self.logfile
@@ -271,14 +295,18 @@ class TrainLatticeMD:
         #nonmatter_sequence_data:     (batch_size, sequence_length+1, system_dim3, number_of_nonmatter_features)
         #nonmatter_sum_data:          (batch_size, sequence_length+1, number_of_nonmatter_features)
         matter_sequence_data_transformed    = matter_sequence_data_untransformed   .view(batch_size, self.sequence_length_+1, *system_dim, self.number_of_matters_, self.matter_dim_, self.matter_dim_, self.matter_dim_)
-        nonmatter_sequence_data_transformed = nonmatter_sequence_data_untransformed.view(batch_size, self.sequence_length_+1, *system_dim, nonmatter_sequence_data_untransformed.shape[-1])
-                
         matter_sequence_data_transformed    = matter_sequence_data_transformed   .permute(dims = self.matter_sequence_octahedral_group_permutation_[group_index]).flip(dims = self.matter_sequence_octahedral_group_flip_[group_index])
-        nonmatter_sequence_data_transformed = nonmatter_sequence_data_transformed.permute(dims = self.nonmatter_sequence_system_dim_octahedral_group_permutation_[group_index])[...,self.nonmatter_sequence_stress_dim_octahedral_group_permutation_[group_index]]*self.nonmatter_sequence_octahedral_group_negation_[group_index]
-        nonmatter_sum_data_transformed = nonmatter_sum_data_untransformed[...,self.nonmatter_sequence_stress_dim_octahedral_group_permutation_[group_index]]*self.nonmatter_sequence_octahedral_group_negation_[group_index]
-        
         matter_sequence_data_transformed    = matter_sequence_data_transformed.flatten(start_dim = 2, end_dim = 4)
-        nonmatter_sequence_data_transformed = nonmatter_sequence_data_transformed.flatten(start_dim = 2, end_dim = 4)
+        
+        if self.lattice_md_.number_of_nonmatter_features_ > 0:
+            nonmatter_sequence_data_transformed = nonmatter_sequence_data_untransformed.view(batch_size, self.sequence_length_+1, *system_dim, nonmatter_sequence_data_untransformed.shape[-1])
+            nonmatter_sequence_data_transformed = nonmatter_sequence_data_transformed.permute(dims = self.nonmatter_sequence_system_dim_octahedral_group_permutation_[group_index])[...,self.nonmatter_sequence_stress_dim_octahedral_group_permutation_[group_index]]*self.nonmatter_sequence_octahedral_group_negation_[group_index]
+            nonmatter_sum_data_transformed = nonmatter_sum_data_untransformed[...,self.nonmatter_sequence_stress_dim_octahedral_group_permutation_[group_index]]*self.nonmatter_sequence_octahedral_group_negation_[group_index]
+            nonmatter_sequence_data_transformed = nonmatter_sequence_data_transformed.flatten(start_dim = 2, end_dim = 4)
+        else:
+            nonmatter_sequence_data_transformed = None
+            nonmatter_sum_data_transformed      = None
+
         return matter_sequence_data_transformed, nonmatter_sequence_data_transformed, nonmatter_sum_data_transformed
 
     def load_training_data(self):
@@ -300,11 +328,11 @@ class TrainLatticeMD:
                 self.sd_ = dill.load(fin)
                 fin.close()
                 number_of_matters, matter_dim, system_dim, sequence_length, \
-                matter_sequence_data, stress_sequence_data, pe_sequence_data, \
-                matter_sum_data,      stress_sum_data,      pe_sum_data = self.sd_.get_data()
+                matter_sequence_data, momentum_sequence_data, stress_sequence_data, pe_sequence_data, \
+                matter_sum_data,                                  stress_sum_data,  pe_sum_data = self.sd_.get_data()
 
-                matter_prefactor,     stress_prefactor,     pe_prefactor,\
-                matter_sum_prefactor, stress_sum_prefactor, pe_sum_prefactor = self.sd_.get_prefactor()
+                matter_prefactor,     momentum_prefactor, stress_prefactor,     pe_prefactor,\
+                matter_sum_prefactor,                     stress_sum_prefactor, pe_sum_prefactor = self.sd_.get_prefactor()
 
                 if training_index > 0:
                     if self.number_of_matters_ != number_of_matters: raise NumberOfMattersException
@@ -315,9 +343,22 @@ class TrainLatticeMD:
                     self.matter_dim_        = matter_dim
                     self.sequence_length_   = sequence_length
 
-                nonmatter_sequence_data = torch.cat((stress_sequence_data, pe_sequence_data), dim = -1)
-                nonmatter_sum_data = torch.cat((stress_sum_data, pe_sum_data), dim = -1)
-                
+                nonmatter_sequence_data = None
+                nonmatter_sum_data      = None
+                if self.include_stress_fg:
+                    nonmatter_sequence_data = stress_sequence_data
+                    nonmatter_sum_data      = stress_sum_data
+                if self.include_pe_fg:
+                    if nonmatter_sequence_data is not None:
+                        nonmatter_sequence_data = torch.cat((nonmatter_sequence_data, pe_sequence_data), dim = -1)
+                        nonmatter_sum_data = torch.cat((nonmatter_sum_data, pe_sum_data), dim = -1)
+                    else:
+                        nonmatter_sequence_data = pe_sequence_data
+                        nonmatter_sum_data      = pe_sum_data
+                if nonmatter_sum_data is None:
+                    nonmatter_sequence_data = torch.zeros(len(pe_sequence_data), 1)
+                    nonmatter_sum_data = torch.zeros(len(pe_sequence_data), 1)
+
                 self.dataset_matter_prefactor_.append(matter_prefactor.to(self.device_))
                 stress_prefactor_avg = torch.cat((torch.ones(3)*stress_prefactor[:3].mean(), torch.ones(3)*stress_prefactor[3:].mean()))
                 self.dataset_nonmatter_prefactor_.append(torch.cat((stress_prefactor_avg, pe_prefactor)).to(self.device_))
@@ -338,11 +379,15 @@ class TrainLatticeMD:
                 self.test_loader_.append(torch.utils.data.DataLoader(dataset=test_dataset, batch_size=self.batch_size_,shuffle=False))
 
                 print("\t\tMatter prefactor        = %s"%(matter_prefactor.numpy()))
-                print("\t\tStress prefactor        = %s"%(stress_prefactor_avg.numpy()))
-                print("\t\tPe     prefactor        = %s"%(pe_prefactor.numpy()))
+                if self.include_stress_fg:
+                    print("\t\tStress prefactor        = %s"%(stress_prefactor_avg.numpy()))
+                if self.include_pe_fg:
+                    print("\t\tPe     prefactor        = %s"%(pe_prefactor.numpy()))
                 print("\t\tMatter sum prefactor    = %s"%(matter_sum_prefactor.numpy()))
-                print("\t\tStress sum prefactor    = %s"%(stress_sum_prefactor_avg.numpy()))
-                print("\t\tPe     sum prefactor    = %s"%(pe_sum_prefactor.numpy()))
+                if self.include_stress_fg:
+                    print("\t\tStress sum prefactor    = %s"%(stress_sum_prefactor_avg.numpy()))
+                if self.include_pe_fg:
+                    print("\t\tPe     sum prefactor    = %s"%(pe_sum_prefactor.numpy()))
 
         except NumberOfMattersException:
             print("Number of matters should be the same for all training data.")
