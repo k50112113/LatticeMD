@@ -1,7 +1,8 @@
 import torch
 import os
 import sys
-from LatticeMDModel import LatticeMD, LatticeMDDataset, MDSequenceData
+from LatticeMDData import MDSequenceData, LatticeMDDataset
+from LatticeMDModel import LatticeMD
 import dill
 from Clock import Clock
 
@@ -23,10 +24,10 @@ class LatticeMDSimulator:
         fin = open("%s"%(data_path),"rb")
         sd = dill.load(fin)
         number_of_matters_tmp, matter_dim_tmp, system_dim_tmp, sequence_length_tmp, \
-        matter_sequence_data_tmp, stress_sequence_data_tmp, pe_sequence_data_tmp, \
-        matter_sum_data_tmp,      stress_sum_data_tmp,      pe_sum_data_tmp = sd.get_data()
-        matter_prefactor,     stress_prefactor,     pe_prefactor,\
-        matter_sum_prefactor, stress_sum_prefactor, pe_sum_prefactor = sd.get_prefactor()
+        matter_sequence_data_tmp, momentum_sequence_data, stress_sequence_data_tmp, pe_sequence_data_tmp, \
+        matter_sum_data_tmp,                              stress_sum_data_tmp,      pe_sum_data_tmp = sd.get_data()
+        matter_prefactor,         momentum_prefactor, stress_prefactor,     pe_prefactor,\
+        matter_sum_prefactor,                         stress_sum_prefactor, pe_sum_prefactor = sd.get_prefactor()
         fin.close()
         nonmatter_sequence_data_tmp = torch.cat((stress_sequence_data_tmp, pe_sequence_data_tmp), dim = -1)
         self.system_dim_ = system_dim_tmp
@@ -54,14 +55,16 @@ class LatticeMDSimulator:
         output_data.nonmatter_sequence_data_ = self.current_nonmatter_sequence.detach().clone().cpu()
         for i_step in range(steps):
             next_matter, next_nonmatter = self.lattice_md_(self.current_matter_sequence, self.current_nonmatter_sequence, self.system_dim_)
-            print(next_matter[next_matter.sum(dim=(1,2,3,4)).argmax()].flatten())
+            
             next_matter    += self.current_matter_sequence[-1]
-            next_nonmatter += self.current_nonmatter_sequence[-1]
             self.current_matter_sequence = torch.cat((self.current_matter_sequence[1:], next_matter.unsqueeze(0)), dim = 0)
-            self.current_nonmatter_sequence = torch.cat((self.current_nonmatter_sequence[1:], next_nonmatter.unsqueeze(0)), dim = 0)
-
             output_data.matter_sequence_data_ = torch.cat((output_data.matter_sequence_data_, next_matter.unsqueeze(0).detach().clone().cpu()), dim = 0)
-            output_data.nonmatter_sequence_data_ = torch.cat((output_data.nonmatter_sequence_data_, next_nonmatter.unsqueeze(0).detach().clone().cpu()), dim = 0)
+            
+            if next_nonmatter:
+                next_nonmatter += self.current_nonmatter_sequence[-1]   
+                self.current_nonmatter_sequence = torch.cat((self.current_nonmatter_sequence[1:], next_nonmatter.unsqueeze(0)), dim = 0)
+                output_data.nonmatter_sequence_data_ = torch.cat((output_data.nonmatter_sequence_data_, next_nonmatter.unsqueeze(0).detach().clone().cpu()), dim = 0)
+            
             print(i_step, next_matter.sum().item())
         
         output_data.matter_sequence_data_ = output_data.matter_sequence_data_.unsqueeze(1)
