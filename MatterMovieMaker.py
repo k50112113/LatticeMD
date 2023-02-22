@@ -49,7 +49,7 @@ if output_filename[-4:] != '.mp4': output_filename += '.mp4'
 if rank == 0:
     fin = open(data_path,"rb")
     number_of_matters_tmp, matter_dim_tmp, system_dim_tmp, sequence_length_tmp, \
-    matter_sequence_data_tmp, _, _, \
+    matter_sequence_data_tmp, _, _, _, \
     _, _, _ = dill.load(fin).get_data()
     fin.close()
 
