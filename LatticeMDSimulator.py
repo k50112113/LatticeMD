@@ -39,8 +39,9 @@ class LatticeMDSimulator:
             exit()
         self.number_of_matters_ = self.lattice_md_.number_of_matters_
         self.matter_dim_ = self.lattice_md_.matter_dim_
-        self.current_matter_sequence = matter_sequence_data_tmp[0][:-1]
-        self.current_nonmatter_sequence = nonmatter_sequence_data_tmp[0][:-1]
+        nth_batch = 0
+        self.current_matter_sequence = matter_sequence_data_tmp[nth_batch][:-1]
+        self.current_nonmatter_sequence = nonmatter_sequence_data_tmp[nth_batch][:-1]
         self.total_matter_ = 1.0/matter_sum_prefactor
 
         self.current_matter_sequence = self.current_matter_sequence.to(self.device_)
@@ -55,7 +56,8 @@ class LatticeMDSimulator:
         output_data.nonmatter_sequence_data_ = self.current_nonmatter_sequence.detach().clone().cpu()
         for i_step in range(steps):
             next_matter, next_nonmatter = self.lattice_md_(self.current_matter_sequence, self.current_nonmatter_sequence, self.system_dim_)
-            
+            max_dmatter = next_matter.max().item()
+
             next_matter    += self.current_matter_sequence[-1]
             self.current_matter_sequence = torch.cat((self.current_matter_sequence[1:], next_matter.unsqueeze(0)), dim = 0)
             output_data.matter_sequence_data_ = torch.cat((output_data.matter_sequence_data_, next_matter.unsqueeze(0).detach().clone().cpu()), dim = 0)
@@ -65,7 +67,7 @@ class LatticeMDSimulator:
                 self.current_nonmatter_sequence = torch.cat((self.current_nonmatter_sequence[1:], next_nonmatter.unsqueeze(0)), dim = 0)
                 output_data.nonmatter_sequence_data_ = torch.cat((output_data.nonmatter_sequence_data_, next_nonmatter.unsqueeze(0).detach().clone().cpu()), dim = 0)
             
-            print(i_step, next_matter.sum().item())
+            print("%d %.2f %.2f %f"%(i_step, next_matter.sum().item(), next_matter.max().item(), max_dmatter))
         
         output_data.matter_sequence_data_ = output_data.matter_sequence_data_.unsqueeze(1)
         output_data.nonmatter_sequence_data_ = output_data.nonmatter_sequence_data_.unsqueeze(1)

@@ -123,11 +123,10 @@ class TrainLatticeMD:
     def run_epoch(self, ith_epoch, test_fg = False):
         if test_fg: loader = self.test_loader_
         else: loader = self.train_loader_
-        loss_avg               = torch.tensor(0.)
-        matter_loss_avg        = torch.tensor(0.)
-        nonmatter_loss_avg     = torch.tensor(0.)
-        matter_sum_loss_avg    = torch.tensor(0.)
-        nonmatter_sum_loss_avg = torch.tensor(0.)
+        loss_avg                    = 0.
+        matter_loss_avg             = 0.
+        nonmatter_loss_avg          = 0.
+        encoder_ae_reconst_loss_avg = 0.
 
         total_n_frames = 0
 
@@ -161,50 +160,74 @@ class TrainLatticeMD:
                     # print(nonmatter_sequence[-1].sum(dim = 0)[:-1]/nonmatter_sum_data[0, -1, :-1])
                     # print(nonmatter_sum_data[0, -1, :-1])
 
-                    #predict
-                    predicted_matter_tmp, predicted_nonmatter_tmp = self.lattice_md_(matter_sequence_in, nonmatter_sequence_in, system_dim)
+                    ##############################################################forward pass
+                    #predicted_matter_tmp, predicted_nonmatter_tmp = self.lattice_md_(matter_sequence_in, nonmatter_sequence_in, system_dim)
+                    matter_sequence_neighbors    = self.lattice_md_.get_neighbor_cell_matter(matter_sequence, system_dim)
+                    nonmatter_sequence_neighbors = None
+                    if self.lattice_md_.number_of_nonmatter_features_ > 0:
+                        nonmatter_sequence_neighbors = self.lattice_md_.get_neighbor_cell_nonmatter(nonmatter_sequence, system_dim)
                     
+                    ##############################################################encode
+                    L = len(matter_sequence_neighbors)
+                    matter_encoded    = self.lattice_md_.matter_encoder_ae_encode(matter_sequence_neighbors.flatten(0, 1))
+                    matter_sequence_neighbors_reconst = self.lattice_md_.matter_encoder_ae_decode(matter_encoded).view(L, -1, self.lattice_md_.number_of_matters_, 3*self.lattice_md_.matter_dim_, 3*self.lattice_md_.matter_dim_, 3*self.lattice_md_.matter_dim_)
+                    matter_encoded    = matter_encoded.flatten(start_dim = 1)
+                    matter_encoded    = matter_encoded.view(L, -1, self.lattice_md_.matter_encoder_encoded_flatten_dim_)
+                    
+                    lstm_in           = matter_encoded   #(sequence_length-2,  batch_size * system_dim3, matter_encoder_encoded_flatten_dim)
+                    if self.lattice_md_.number_of_nonmatter_features_ > 0:
+                        nonmatter_encoded = nonmatter_sequence_neighbors.flatten(start_dim = 0, end_dim = 1)                 #(sequence_length-2, * batch_size * system_dim3, 27*number_of_nonmatter_features_)
+                        nonmatter_encoded = self.lattice_md_.nonmatter_encoder_.encode(nonmatter_encoded)                           #(sequence_length-2, * batch_size * system_dim3, nonmatter_encoded_dim)
+                        nonmatter_encoded = nonmatter_encoded.view(L, -1, self.lattice_md_.nonmatter_encoded_dim_)             #(sequence_length-2,   batch_size * system_dim3, nonmatter_encoded_dim)
+                        lstm_in = torch.cat((lstm_in, nonmatter_encoded), dim = -1)                      #(sequence_length-2,  batch_size * system_dim3, lstm_in_dim)
+                    ##############################################################encode
+
+                    lstm_in = lstm_in.diff(dim = 0)
+                    out, (hn, cn) = self.lattice_md_.advance(lstm_in)
+                    lstm_out = hn.sum(dim = 0) #(batch_size * system_dim3, lstm_out_dim)
+                    
+                    predicted_matter_tmp, predicted_nonmatter_tmp = self.lattice_md_.decode(lstm_out)
+                    predicted_matter_tmp = self.lattice_md_.matter_normalize(predicted_matter_tmp, system_dim)
+
+                    # print(predicted_matter_tmp.shape)
+                    # print(predicted_nonmatter_tmp)
+                    # print(matter_sequence_neighbors.shape)
+                    # print(matter_sequence_neighbors_reconst.shape)
+                    ##############################################################forward pass
+
                     #compute matter loss
-                    predicted_matter_tmp   += matter_sequence_in[-1]
-                    predicted_matter        = predicted_matter_tmp*self.dataset_matter_prefactor_[training_index]
-                    labeled_matter          =    matter_sequence[-1] * self.dataset_matter_prefactor_[training_index]
+                    # print((matter_sequence[-1] - matter_sequence_in[-1]).abs().max().item(), predicted_matter_tmp.abs().max().item())
+                    predicted_matter        = predicted_matter_tmp# * self.dataset_matter_prefactor_[training_index]
+                    labeled_matter          = (matter_sequence[-1] - matter_sequence_in[-1])# * self.dataset_matter_prefactor_[training_index]
                     matter_loss             = self.compute_loss(predicted_matter, labeled_matter)
-                    predicted_matter_sum    = predicted_matter_tmp.view(batch_size, system_dim3, self.number_of_matters_, self.matter_dim_, self.matter_dim_, self.matter_dim_).sum(dim = (1, 3, 4, 5))*self.dataset_matter_sum_prefactor_[training_index]
-                    labeled_matter_sum      = matter_sum_data*self.dataset_matter_sum_prefactor_[training_index]
-                    matter_sum_loss         = self.compute_loss(predicted_matter_sum, labeled_matter_sum)
-                    matter_loss_avg        += matter_loss.detach().cpu()*batch_size
-                    matter_sum_loss_avg    += matter_sum_loss.detach().cpu()*batch_size
+                    matter_loss_avg        += matter_loss.detach().item()*batch_size
 
                     #compute nonmatter loss
+                    nonmatter_loss = 0.
+                    nonmatter_sum_loss = 0.
                     if self.lattice_md_.number_of_nonmatter_features_ > 0:
-                        predicted_nonmatter_tmp += nonmatter_sequence_in[-1]
-                        predicted_nonmatter      = predicted_nonmatter_tmp*self.dataset_nonmatter_prefactor_[training_index]                    
-                        labeled_nonmatter        = nonmatter_sequence[-1] * self.dataset_nonmatter_prefactor_[training_index]
+                        predicted_nonmatter      = predicted_nonmatter_tmp * self.dataset_nonmatter_prefactor_[training_index]                    
+                        labeled_nonmatter        = (nonmatter_sequence[-1] - nonmatter_sequence_in[-1]) * self.dataset_nonmatter_prefactor_[training_index]
                         nonmatter_loss           = self.compute_loss(predicted_nonmatter, labeled_nonmatter)
-                        predicted_nonmatter_sum  = predicted_nonmatter_tmp.view(batch_size, system_dim3, 7).sum(dim = 1)*self.dataset_nonmatter_sum_prefactor_[training_index]
-                        labeled_nonmatter_sum    = nonmatter_sum_data[:, -1, :]*self.dataset_nonmatter_sum_prefactor_[training_index]
-                        nonmatter_sum_loss       = self.compute_loss(predicted_nonmatter_sum, labeled_nonmatter_sum)
-                        nonmatter_loss_avg      += nonmatter_loss.detach().cpu()*batch_size
-                        nonmatter_sum_loss_avg  += nonmatter_sum_loss.detach().cpu()*batch_size  
-                    else:
-                        nonmatter_loss = 0.
-                        nonmatter_sum_loss = 0.
-
-                    loss_avg += loss.detach().cpu()*batch_size
-                    # print("%.4e %.4e %.4e %.4e"%(matter_loss.item(), nonmatter_loss.item(), matter_sum_loss.item(), nonmatter_sum_loss.item()))
-                    loss = matter_loss + nonmatter_loss + matter_sum_loss + nonmatter_sum_loss
+                        nonmatter_loss_avg      += nonmatter_loss.detach().item()*batch_size
+                        
+                    encoder_ae_reconst_loss = self.compute_loss(matter_sequence_neighbors_reconst, matter_sequence_neighbors)
+                    encoder_ae_reconst_loss_avg += encoder_ae_reconst_loss.detach().item()*batch_size
+                    # print(matter_sequence_neighbors.shape)
+                    
+                    loss = matter_loss + nonmatter_loss + nonmatter_sum_loss + encoder_ae_reconst_loss
                     if not test_fg:
                         self.optimization.zero_grad()
                         loss.backward()
                         self.optimization.step()
+                    loss_avg += loss.detach().item()*batch_size
 
         loss_avg               /= total_n_frames
         matter_loss_avg        /= total_n_frames
         nonmatter_loss_avg     /= total_n_frames
-        matter_sum_loss_avg    /= total_n_frames
-        nonmatter_sum_loss_avg /= total_n_frames
+        encoder_ae_reconst_loss_avg /= total_n_frames
 
-        return loss_avg, matter_loss_avg, nonmatter_loss_avg, matter_sum_loss_avg, nonmatter_sum_loss_avg
+        return loss_avg, matter_loss_avg, nonmatter_loss_avg, encoder_ae_reconst_loss_avg
 
     def train(self):
         sys.stdout = self.logfile
@@ -212,20 +235,19 @@ class TrainLatticeMD:
 
         timer = Clock()
         print("")
-        print("%5s%24s%24s%24s%24s | %10s%10s\n"%("epoch", "mat2", "non-mat2", "mat_sum2", "non-mat_sum2", "lr", "time"),end="")
+        print("%5s%24s%24s%24s | %10s%10s\n"%("epoch", "mat2", "non-mat2", "encoder_reconst", "lr", "time"),end="")
 
         self.lattice_md_.unfreeze_model()
         timer.get_dt()
         for ith_epoch in range(self.number_of_epochs_):
-            loss_train, matter_loss_train, nonmatter_loss_train, matter_sum_loss_train, nonmatter_sum_loss_train = self.run_epoch(ith_epoch)
+            loss_train, matter_loss_train, nonmatter_loss_train, encoder_ae_reconst_loss_train = self.run_epoch(ith_epoch)
             with torch.no_grad():
-                loss_test, matter_loss_test, nonmatter_loss_test, matter_sum_loss_test, nonmatter_sum_loss_test = self.run_epoch(ith_epoch, test_fg = True)
+                loss_test, matter_loss_test, nonmatter_loss_test, encoder_ae_reconst_loss_val = self.run_epoch(ith_epoch, test_fg = True)
 
-            print("%5d%12.3e%12.3e%12.3e%12.3e%12.3e%12.3e%12.3e%12.3e | %10.3e"%(ith_epoch+1, \
-                                           matter_loss_train.item()       , matter_loss_test.item(), \
-                                           nonmatter_loss_train.item()    , nonmatter_loss_test.item(), \
-                                           matter_sum_loss_train.item()   , matter_sum_loss_test.item(), \
-                                           nonmatter_sum_loss_train.item(), nonmatter_sum_loss_test.item(), \
+            print("%5d%12.3e%12.3e%12.3e%12.3e%12.3e%12.3e | %10.3e"%(ith_epoch+1, \
+                                           matter_loss_train       , matter_loss_test, \
+                                           nonmatter_loss_train    , nonmatter_loss_test, \
+                                           encoder_ae_reconst_loss_train, encoder_ae_reconst_loss_val, \
                                            self.optimization.param_groups[0]["lr"].item()), end="")
             print("%10.2f"%(timer.get_dt()))
             self.learning_rate_schedule.step()
